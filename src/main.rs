@@ -10,9 +10,7 @@ mod editor;
 mod logger;
 
 fn main() {
-    logger::init().unwrap_or_else(|_err| 
-        panic!("Error an Logger initialization!")
-    );
+    logger::init().unwrap_or_else(|_err| panic!("Error an Logger initialization!"));
 
     let mut editor = Editor::new();
     let mut client = ConsoleClient::new(true);
@@ -21,19 +19,17 @@ fn main() {
     args.next();
     let path_arg = args.next();
 
-    editor.on_load();
+    client.load();
 
     if let Some(path) = path_arg {
         editor.on_load_file(path);
     }
 
     loop {
-        if let Some(_) = editor.on_update() {
+        if let Some(_) = client.update(&mut editor) {
             break;
         }
 
         client.draw(&editor);
     }
-
-    editor.on_exit();
 }

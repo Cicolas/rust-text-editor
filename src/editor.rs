@@ -1,18 +1,27 @@
-use std::{any::Any, fs::File, io::{stdin, stdout, Read, Stdin, Stdout, Write}, process::exit};
+use std::{
+    char, cmp,
+    fs::File,
+    io::{BufRead, Read},
+};
 
-use crossterm::{cursor, event::{read, Event, KeyCode, KeyEventKind, KeyEventState}, execute, terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType}, ExecutableCommand};
 use log::{error, info};
 
-pub type EditorV8 = Editor<Vec<u8>>;
+pub type VectorEditor = Editor<Vec<char>>;
 
-#[derive(Debug)]
+enum Movement {
+    UP,
+    DOWN,
+    LEFT,
+    RIGHT,
+}
+
 pub struct Editor<T> {
-    pub stdout: Stdout,
     pub file_path: Option<String>,
-    pub content: T,
-    pub cursor: u64,
+    pub content: EditorContent<T>,
+    pub cursor: u32,
     pub row: u32,
-    pub col: u32
+    pub render_col: u32,
+    pub col: u32,
 }
 
 pub trait EditorIO {
@@ -21,30 +30,84 @@ pub trait EditorIO {
 }
 
 pub trait EditorEvent {
-    fn on_load(&mut self);
     fn on_load_file(&mut self, path: String);
-    fn on_update(&mut self) -> Option<u8>;
     fn on_write(&mut self, keycode: u32);
-    fn on_exit(&mut self);
 }
 
-impl EditorV8 {
+impl VectorEditor {
     pub fn new() -> Self {
         Self {
-            stdout: stdout(),
-            file_path: None,            
-            content: Vec::new(),
+            file_path: None,
+            content: EditorContent::<Vec<char>>::new(),
             cursor: 0,
             row: 0,
+            render_col: 0,
             col: 0,
         }
     }
+
+    fn move_cursor(&mut self, movement: Movement) {
+        let line = self.content.get_line(self.row);
+        let mut line_len = line.unwrap_or(String::from("\n")).len() as u32;
+        let mut wrap_left = false;
+        let is_overflowing = self.col > self.render_col;
+        
+        match movement {
+            Movement::UP => {
+                self.row = cmp::max(0, self.row as i32 - 1) as u32;
+            }
+            Movement::DOWN => {
+                self.row += 1;
+            }
+            Movement::LEFT => {
+                self.cursor = cmp::max(0, self.cursor as i32 - 1) as u32;
+
+                if self.col == 0 && self.cursor != 0 {
+                    self.row = cmp::max(0, self.row as i32 - 1) as u32;
+
+                    wrap_left = true;
+                    // line_len = self.get_actual_line().len() as u32;
+                    // self.col = line_len;
+                } else {
+                    if is_overflowing {
+                        self.col = cmp::max(0, self.render_col as i32 - 1) as u32;
+                    } else {
+                        self.col = cmp::max(0, self.col as i32 - 1) as u32;
+                    }
+                }
+            }
+            Movement::RIGHT => {
+                self.cursor += 1;
+
+                self.col += 1;
+
+                // if self.content[self.cursor as usize] == '\n' {}
+                if self.col > line_len {
+                    self.col = 0;
+                    self.row += 1;
+                }
+            }
+        }
+
+        match self.content.get_line_len(self.row) {
+            Some(n) => line_len = n,
+            None => self.row -= 1,
+        }
+        
+        if wrap_left {
+            self.col = line_len;
+        }
+        
+        self.render_col = cmp::min(line_len, self.col);
+    }
 }
 
-impl EditorIO for EditorV8 {
+impl EditorIO for VectorEditor {
     fn open_file(&mut self, path: &str) -> Result<(), std::io::Error> {
         let mut file = File::open(path)?;
-        file.read_to_end(&mut self.content)?;
+        let mut buf: Vec<u8> = Vec::new();
+        file.read_to_end(&mut buf)?;
+        self.content.load_data(buf);
         Ok(())
     }
 
@@ -53,64 +116,71 @@ impl EditorIO for EditorV8 {
     }
 }
 
-impl EditorEvent for EditorV8 {
-    fn on_load(&mut self) {
-        enable_raw_mode().unwrap_or_else(|_|
-            error!("unable to enable raw mode!")
-        );
-
-        execute!(self.stdout, Clear(ClearType::All), cursor::MoveTo(0, 0)).unwrap_or_else(|_| {
-            error!("unable to setup console");
-            exit(1);
-        });
-    }
-
+impl EditorEvent for VectorEditor {
     fn on_load_file(&mut self, path: String) {
         info!("loading file '{}'", path);
-        
-        self.open_file(path.as_str()).unwrap_or_else(|_err|
-            error!("error while loading") 
-        );
-        
+
+        self.open_file(path.as_str())
+            .unwrap_or_else(|_err| error!("error while loading"));
+
         self.file_path = Some(path);
     }
 
-    fn on_update(&mut self) -> Option<u8> {
-        match read().unwrap() {
-            Event::Key(key) => {
-                if key.kind == KeyEventKind::Release {
-                    return None;
-                }
-                
-                match key.code {
-                    KeyCode::Char(c) => {
-                        self.on_write(c as u32);
-                    },
-                    KeyCode::Backspace => {
-                        self.on_write(0x08);  
-                    },
-                    KeyCode::Enter => {
-                        self.on_write(0x0D);
-                    },
-                    KeyCode::Esc => {
-                        return Some(1);
-                    },
-                    _ => {}
-                }              
-            },
-            _ => ()
+    fn on_write(&mut self, keycode: u32) {
+        match char::from_u32(keycode) {
+            Some('h') => {
+                self.move_cursor(Movement::LEFT);
+            }
+            Some('j') => {
+                self.move_cursor(Movement::DOWN);
+            }
+            Some('k') => {
+                self.move_cursor(Movement::UP);
+            }
+            Some('l') => {
+                self.move_cursor(Movement::RIGHT);
+            }
+            _ => (),
         }
-        
-        None
+
+    }
+}
+
+fn is_crlf(c: char) -> bool {
+    return c == '\n' || c == '\r';
+}
+
+pub struct EditorContent<T> {
+    data: T,
+}
+
+pub trait EditorContentTrait {
+    fn load_data(&mut self, raw_data: Vec<u8>);
+    fn get_line(&self, i: u32) -> Option<String>;
+    fn get_line_len(&self, i: u32) -> Option<u32>;
+}
+
+impl EditorContent<Vec<char>> {
+    fn new() -> EditorContent<Vec<char>> {
+        Self {
+            data: Vec::<char>::new(),
+        }
+    }
+}
+
+impl EditorContentTrait for EditorContent<Vec<char>> {
+    fn load_data(&mut self, raw_data: Vec<u8>) {
+        self.data = raw_data.iter().map(|c| *c as char).collect();
     }
     
-    fn on_write(&mut self, keycode: u32) {
-        // info!("{:4x}", keycode);
+    fn get_line(&self, i: u32) -> Option<String> {
+        self.data
+            .split(|c| is_crlf(*c))
+            .map(|l| l.iter().collect())
+            .nth(i as usize)
     }
 
-    fn on_exit(&mut self) {
-        disable_raw_mode().unwrap_or_else(|_|
-            error!("unable to disable raw mode!")
-        )
+    fn get_line_len(&self, i: u32) -> Option<u32> {
+        Some(self.get_line(i)?.len() as u32)
     }
 }
