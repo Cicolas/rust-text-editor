@@ -31,7 +31,7 @@ impl ConsoleClient {
 
     fn pre_draw(&mut self) -> Result<&mut Stdout, std::io::Error> {
         self.stdout
-            .execute(Clear(ClearType::Purge))?
+            .execute(Clear(ClearType::All))?
             .execute(MoveTo(0, 0))
     }
 }
@@ -83,7 +83,7 @@ impl Client<VectorEditor> for ConsoleClient {
         while let Some(line) = context.content.get_line(line_num) {
             // for (line_num, line) in lines {
             if self.line_numbered {
-                print!("{:>4}  ", line_num);
+                print!("{:>4}  ", line_num + 1);
             }
 
             println!("{}", line);
@@ -94,9 +94,9 @@ impl Client<VectorEditor> for ConsoleClient {
         let cursor_y = context.row;
 
         let carret = match context.mode {
-            Mode::NORMAL => SetCursorStyle::SteadyBlock,
-            Mode::INSERT => SetCursorStyle::BlinkingBar,
-            Mode::VISUAL => SetCursorStyle::SteadyUnderScore,
+            Mode::Normal => SetCursorStyle::SteadyBlock,
+            Mode::Insert => SetCursorStyle::BlinkingBar,
+            Mode::Visual => SetCursorStyle::SteadyUnderScore,
         };
 
         let _result = execute!(
