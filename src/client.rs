@@ -1,16 +1,14 @@
-use std::
-    io::{stdout, Stdout}
-;
+use std::io::{stdout, Stdout};
 
 use crossterm::{
-    cursor::{self, MoveTo},
+    cursor::{self, MoveTo, SetCursorStyle},
     event::{read, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
     ExecutableCommand,
 };
 
-use crate::editor::{EditorContentTrait, EditorEvent, VectorEditor};
+use crate::editor::{EditorContentTrait, EditorEvent, Mode, VectorEditor};
 
 pub struct ConsoleClient {
     stdout: Stdout,
@@ -52,21 +50,19 @@ impl Client<VectorEditor> for ConsoleClient {
                     return None;
                 }
 
-                match key.code {
-                    KeyCode::Char(c) => {
-                        context.on_write(c as u32);
-                    }
-                    KeyCode::Backspace => {
-                        context.on_write(0x08);
-                    }
-                    KeyCode::Enter => {
-                        context.on_write(0x0D);
-                    }
-                    KeyCode::Esc => {
-                        return Some(1);
-                    }
-                    _ => {}
-                }
+                let code = match key.code {
+                    KeyCode::Char(c)   => c as u32,
+                    KeyCode::Backspace => 0x08,
+                    KeyCode::Enter     => 0x0D,
+                    KeyCode::Esc       => 0x1B,
+                    KeyCode::Up        => 0x26,
+                    KeyCode::Down      => 0x28,
+                    KeyCode::Left      => 0x25,
+                    KeyCode::Right     => 0x27,
+                    _                  => 0
+                };
+
+                context.on_write(code);
             }
             _ => (),
         }
@@ -85,7 +81,7 @@ impl Client<VectorEditor> for ConsoleClient {
         let mut line_num = 0;
 
         while let Some(line) = context.content.get_line(line_num) {
-        // for (line_num, line) in lines {
+            // for (line_num, line) in lines {
             if self.line_numbered {
                 print!("{:>4}  ", line_num);
             }
@@ -97,12 +93,22 @@ impl Client<VectorEditor> for ConsoleClient {
         let cursor_x = context.render_col + 6;
         let cursor_y = context.row;
 
-        let _result = self.stdout.execute(cursor::MoveTo(cursor_x as u16, cursor_y as u16));
+        let carret = match context.mode {
+            Mode::NORMAL => SetCursorStyle::SteadyBlock,
+            Mode::INSERT => SetCursorStyle::BlinkingBar,
+            Mode::VISUAL => SetCursorStyle::SteadyUnderScore,
+        };
+
+        let _result = execute!(
+            self.stdout,
+            carret,
+            cursor::MoveTo(cursor_x as u16, cursor_y as u16)
+        );
     }
 }
 
 impl Drop for ConsoleClient {
     fn drop(&mut self) {
         disable_raw_mode().unwrap()
-    }    
+    }
 }

@@ -1,8 +1,4 @@
-use std::{
-    char, cmp,
-    fs::File,
-    io::{BufRead, Read},
-};
+use std::{cmp, fs::File, io::Read, process::exit};
 
 use log::{error, info};
 
@@ -15,13 +11,19 @@ enum Movement {
     RIGHT,
 }
 
+pub enum Mode {
+    NORMAL,
+    INSERT,
+    VISUAL,
+}
+
 pub struct Editor<T> {
     pub file_path: Option<String>,
     pub content: EditorContent<T>,
-    pub cursor: u32,
     pub row: u32,
     pub render_col: u32,
     pub col: u32,
+    pub mode: Mode,
 }
 
 pub trait EditorIO {
@@ -39,19 +41,21 @@ impl VectorEditor {
         Self {
             file_path: None,
             content: EditorContent::<Vec<char>>::new(),
-            cursor: 0,
             row: 0,
             render_col: 0,
             col: 0,
+            mode: Mode::NORMAL,
         }
     }
 
     fn move_cursor(&mut self, movement: Movement) {
-        let line = self.content.get_line(self.row);
-        let mut line_len = line.unwrap_or(String::from("\n")).len() as u32;
+        let line = self
+            .content
+            .get_line(self.row)
+            .unwrap_or(String::from("\n"));
+        let mut line_len = line.len() as u32;
         let mut wrap_left = false;
-        let is_overflowing = self.col > self.render_col;
-        
+
         match movement {
             Movement::UP => {
                 self.row = cmp::max(0, self.row as i32 - 1) as u32;
@@ -60,28 +64,17 @@ impl VectorEditor {
                 self.row += 1;
             }
             Movement::LEFT => {
-                self.cursor = cmp::max(0, self.cursor as i32 - 1) as u32;
-
-                if self.col == 0 && self.cursor != 0 {
+                if self.col == 0 && self.row != 0 {
                     self.row = cmp::max(0, self.row as i32 - 1) as u32;
 
                     wrap_left = true;
-                    // line_len = self.get_actual_line().len() as u32;
-                    // self.col = line_len;
                 } else {
-                    if is_overflowing {
-                        self.col = cmp::max(0, self.render_col as i32 - 1) as u32;
-                    } else {
-                        self.col = cmp::max(0, self.col as i32 - 1) as u32;
-                    }
+                    self.col = cmp::max(0, cmp::min(self.render_col, self.col) as i32 - 1) as u32;
                 }
             }
             Movement::RIGHT => {
-                self.cursor += 1;
-
                 self.col += 1;
 
-                // if self.content[self.cursor as usize] == '\n' {}
                 if self.col > line_len {
                     self.col = 0;
                     self.row += 1;
@@ -93,11 +86,11 @@ impl VectorEditor {
             Some(n) => line_len = n,
             None => self.row -= 1,
         }
-        
+
         if wrap_left {
             self.col = line_len;
         }
-        
+
         self.render_col = cmp::min(line_len, self.col);
     }
 }
@@ -128,21 +121,64 @@ impl EditorEvent for VectorEditor {
 
     fn on_write(&mut self, keycode: u32) {
         match char::from_u32(keycode) {
-            Some('h') => {
-                self.move_cursor(Movement::LEFT);
-            }
-            Some('j') => {
-                self.move_cursor(Movement::DOWN);
-            }
-            Some('k') => {
+            // UP
+            _ if keycode == 0x26 => {
                 self.move_cursor(Movement::UP);
             }
-            Some('l') => {
+            // DOWN
+            _ if keycode == 0x28 => {
+                self.move_cursor(Movement::DOWN);
+            }
+            // LEFT
+            _ if keycode == 0x25 => {
+                self.move_cursor(Movement::LEFT);
+            }
+            // RIGHT
+            _ if keycode == 0x27 => {
                 self.move_cursor(Movement::RIGHT);
             }
             _ => (),
         }
 
+        match self.mode {
+            Mode::NORMAL => match char::from_u32(keycode) {
+                Some('h') => {
+                    self.move_cursor(Movement::LEFT);
+                }
+                Some('j') => {
+                    self.move_cursor(Movement::DOWN);
+                }
+                Some('k') => {
+                    self.move_cursor(Movement::UP);
+                }
+                Some('l') => {
+                    self.move_cursor(Movement::RIGHT);
+                }
+                Some('i') => self.mode = Mode::INSERT,
+                Some('a') => {
+                    self.move_cursor(Movement::RIGHT);
+                    self.mode = Mode::INSERT;
+                }
+                Some('q') => {
+                    exit(0);
+                }
+                _ => {
+                    if keycode == 0x1B {
+                        exit(0);
+                    }
+                },
+            },
+            Mode::INSERT => {
+                match char::from_u32(keycode) {
+                    // ESC
+                    _ if keycode == 0x1B => {
+                        self.mode = Mode::NORMAL;
+                    }
+                    _ => (),
+                }
+            }
+            Mode::VISUAL => todo!(),
+        }
     }
 }
 
@@ -170,9 +206,13 @@ impl EditorContent<Vec<char>> {
 
 impl EditorContentTrait for EditorContent<Vec<char>> {
     fn load_data(&mut self, raw_data: Vec<u8>) {
-        self.data = raw_data.iter().map(|c| *c as char).collect();
+        self.data = raw_data
+            .iter()
+            .map(|c| *c as char)
+            .filter(|c| *c != '\r')
+            .collect();
     }
-    
+
     fn get_line(&self, i: u32) -> Option<String> {
         self.data
             .split(|c| is_crlf(*c))
