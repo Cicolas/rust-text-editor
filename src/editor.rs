@@ -2,9 +2,10 @@ use std::{cmp, fs::File, io::Read, process::exit};
 
 use log::{error, info};
 
-use self::actions::Action;
+use self::{actions::Action, redraw::Redraw};
 
 pub mod actions;
+pub mod redraw;
 
 pub type VectorEditor = Editor<Vec<char>>;
 
@@ -32,6 +33,7 @@ pub struct Editor<T> {
     pub render_col: u32,
     pub col: u32,
     pub mode: Mode,
+    pub should_redraw: Option<Redraw>,
 }
 
 pub trait EditorIO {
@@ -41,7 +43,7 @@ pub trait EditorIO {
 
 pub trait EditorEvent {
     fn on_load_file(&mut self, path: String);
-    fn on_actions(&mut self, action: Vec<Action>);
+    fn on_action(&mut self, action: Vec<Action>);
 }
 
 impl VectorEditor {
@@ -53,6 +55,7 @@ impl VectorEditor {
             render_col: 0,
             col: 0,
             mode: Mode::Normal,
+            should_redraw: Some(Redraw::All),
         }
     }
 
@@ -112,8 +115,8 @@ impl VectorEditor {
         self.content.write_char(c, self.render_col, self.row);
     }
 
-    fn delete_char(&mut self) {
-        self.content.delete_char(self.render_col, self.row);
+    fn delete_char(&mut self) -> Option<char> {
+        self.content.delete_char(self.render_col, self.row)
     }
 }
 
@@ -141,7 +144,9 @@ impl EditorEvent for VectorEditor {
         self.file_path = Some(path);
     }
 
-    fn on_actions(&mut self, actions: Vec<Action>) {
+    fn on_action(&mut self, actions: Vec<Action>) {
+        self.should_redraw = None;
+
         actions.iter().for_each(|action| {
             match *action {
                 Action::Move(mov) => {
@@ -151,15 +156,35 @@ impl EditorEvent for VectorEditor {
                     self.mode = mode;
                 }
                 Action::InsertChar(c) => {
+                    if c == '\n' {
+                        self.should_redraw = Some(Redraw::All);
+                    } else {
+                        self.should_redraw = Some(Redraw::Line(self.row));
+                    }
+
                     self.write_char(c);
                     self.move_cursor(Movement::Right);
                 }
                 Action::Backspace => {
+                    if self.render_col == 0 {
+                        self.should_redraw = Some(Redraw::All);
+                    } else {
+                        self.should_redraw = Some(Redraw::Line(self.row));
+                    }
+
                     self.move_cursor(Movement::Left);
                     self.delete_char();
                 }
                 Action::Delete => {
-                    self.delete_char();
+                    let deleted_char = self.delete_char();
+                    match deleted_char {
+                        Some('\n') => {
+                            self.should_redraw = Some(Redraw::All);
+                        }
+                        _ => {
+                            self.should_redraw = Some(Redraw::Line(self.row));
+                        }
+                    }
                 }
                 Action::Quit => {
                     exit(0);
@@ -167,87 +192,6 @@ impl EditorEvent for VectorEditor {
                 _ => (),
             };
         });
-
-        //     match char::from_u32(keycode) {
-        //         // UP
-        //         _ if keycode == 0x26 => {
-        //             self.move_cursor(Movement::Up);
-        //         }
-        //         // DOWN
-        //         _ if keycode == 0x28 => {
-        //             self.move_cursor(Movement::Down);
-        //         }
-        //         // LEFT
-        //         _ if keycode == 0x25 => {
-        //             self.move_cursor(Movement::Left);
-        //         }
-        //         // RIGHT
-        //         _ if keycode == 0x27 => {
-        //             self.move_cursor(Movement::Right);
-        //         }
-        //         _ => (),
-        //     }
-
-        //     match self.mode {
-        //         Mode::Normal => match char::from_u32(keycode) {
-        //             Some('h') => {
-        //                 self.move_cursor(Movement::Left);
-        //             }
-        //             Some('j') => {
-        //                 self.move_cursor(Movement::Down);
-        //             }
-        //             Some('k') => {
-        //                 self.move_cursor(Movement::Up);
-        //             }
-        //             Some('l') => {
-        //                 self.move_cursor(Movement::Right);
-        //             }
-        //             Some('i') => self.mode = Mode::Insert,
-        //             Some('a') => {
-        //                 self.move_cursor(Movement::Right);
-        //                 self.mode = Mode::Insert;
-        //             }
-        //             Some('I') => {
-        //                 self.move_cursor(Movement::LineStart);
-        //                 self.mode = Mode::Insert;
-        //             }
-        //             Some('A') => {
-        //                 self.move_cursor(Movement::LineEnd);
-        //                 self.mode = Mode::Insert;
-        //             }
-        //             Some('q') => {
-        //                 exit(0);
-        //             }
-        //             _ => {
-        //                 if keycode == 0x1B {
-        //                     exit(0);
-        //                 }
-        //             }
-        //         },
-        //         Mode::Insert => {
-        //             // ESC
-        //             if keycode == 0x1B {
-        //                 self.mode = Mode::Normal;
-        //                 return;
-        //             }
-        //             if keycode == 0x08 {
-        //                 if !(self.col == 0 && self.row == 0) {
-        //                     self.move_cursor(Movement::Left);
-        //                     self.content.delete_char(self.render_col, self.row);
-        //                 }
-        //                 return;
-        //             }
-
-        //             match char::from_u32(keycode) {
-        //                 Some(c) => {
-        //                     self.content.write_char(c, self.render_col, self.row);
-        //                     self.move_cursor(Movement::Right);
-        //                 }
-        //                 _ => (),
-        //             }
-        //         }
-        //         Mode::Visual => todo!(),
-        //     }
     }
 }
 
@@ -264,7 +208,7 @@ pub trait EditorContentTrait {
     fn get_line(&self, i: u32) -> Option<String>;
     fn get_line_len(&self, i: u32) -> Option<u32>;
     fn write_char(&mut self, c: char, col: u32, row: u32);
-    fn delete_char(&mut self, col: u32, row: u32);
+    fn delete_char(&mut self, col: u32, row: u32) -> Option<char>;
 }
 
 impl EditorContent<Vec<char>> {
@@ -327,9 +271,11 @@ impl EditorContentTrait for EditorContent<Vec<char>> {
         }
     }
 
-    fn delete_char(&mut self, col: u32, row: u32) {
+    fn delete_char(&mut self, col: u32, row: u32) -> Option<char> {
         if let Some(i) = self.get_pos(col, row) {
-            self.data.remove(i);
+            return Some(self.data.remove(i));
         }
+
+        None
     }
 }
