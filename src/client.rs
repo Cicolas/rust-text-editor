@@ -1,15 +1,16 @@
-use std::io::{stdout, Stdout};
+use std::io::{stdout, Cursor, Stdout};
 
 use crossterm::{
     cursor::{self, MoveTo, SetCursorStyle},
-    event::{read, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
-    ExecutableCommand,
+    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    ExecutableCommand, QueueableCommand,
 };
+use log::info;
 
 use crate::editor::{
-    actions::Action, EditorContentTrait, EditorEvent, Mode, Movement, VectorEditor,
+    actions::Action, redraw::Redraw, EditorContentTrait, EditorEvent, Mode, Movement, VectorEditor,
 };
 
 pub struct ConsoleClient {
@@ -31,35 +32,41 @@ impl ConsoleClient {
         }
     }
 
-    fn pre_draw(&mut self) -> Result<&mut Stdout, std::io::Error> {
-        self.stdout
-            .execute(Clear(ClearType::All))?
-            .execute(MoveTo(0, 0))
+    fn pre_draw(&mut self, should_redraw: Redraw) -> Result<&mut Stdout, std::io::Error> {
+        match should_redraw {
+            Redraw::All => self
+                .stdout
+                .execute(MoveTo(0, 0))?
+                .execute(Clear(ClearType::All)),
+            Redraw::Line(line) => self
+                .stdout
+                .execute(MoveTo(0, line as u16))?
+                .execute(Clear(ClearType::CurrentLine)),
+            Redraw::Range(_, _) => todo!(),
+        }
+        // self.stdout.execute(cursor::Hide)?.execute(MoveTo(0, 0))
     }
 
     fn normal_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
         match key.code {
-            KeyCode::Char(c) => match c {
-                'k' => vec![Action::Move(Movement::Up)],
-                'j' => vec![Action::Move(Movement::Down)],
-                'h' => vec![Action::Move(Movement::Left)],
-                'l' => vec![Action::Move(Movement::Right)],
-                'q' => vec![Action::Quit],
-                'i' => vec![Action::ChangeMode(Mode::Insert)],
-                'I' => vec![
-                    Action::Move(Movement::LineStart),
-                    Action::ChangeMode(Mode::Insert),
-                ],
-                'a' => vec![
-                    Action::Move(Movement::Right),
-                    Action::ChangeMode(Mode::Insert),
-                ],
-                'A' => vec![
-                    Action::Move(Movement::LineEnd),
-                    Action::ChangeMode(Mode::Insert),
-                ],
-                _ => vec![Action::None],
-            },
+            KeyCode::Char('k') => vec![Action::Move(Movement::Up)],
+            KeyCode::Char('j') => vec![Action::Move(Movement::Down)],
+            KeyCode::Char('h') => vec![Action::Move(Movement::Left)],
+            KeyCode::Char('l') => vec![Action::Move(Movement::Right)],
+            KeyCode::Char('q') => vec![Action::Quit],
+            KeyCode::Char('i') => vec![Action::ChangeMode(Mode::Insert)],
+            KeyCode::Char('I') => vec![
+                Action::Move(Movement::LineStart),
+                Action::ChangeMode(Mode::Insert),
+            ],
+            KeyCode::Char('a') => vec![
+                Action::Move(Movement::Right),
+                Action::ChangeMode(Mode::Insert),
+            ],
+            KeyCode::Char('A') => vec![
+                Action::Move(Movement::LineEnd),
+                Action::ChangeMode(Mode::Insert),
+            ],
             KeyCode::Backspace => vec![Action::Move(Movement::Left)],
             KeyCode::Enter => vec![Action::Move(Movement::Down)],
             KeyCode::Esc => vec![Action::Quit],
@@ -91,25 +98,22 @@ impl Client<VectorEditor> for ConsoleClient {
     fn load(&mut self) {
         enable_raw_mode().unwrap();
 
-        execute!(self.stdout, Clear(ClearType::All)).unwrap();
+        execute!(self.stdout, terminal::EnterAlternateScreen).unwrap();
     }
 
     fn update(&mut self, context: &mut VectorEditor) -> Option<u8> {
-        match read().unwrap() {
-            Event::Key(key) => {
-                if key.kind == KeyEventKind::Release {
-                    return None;
-                }
-
-                let actions = match context.mode {
-                    Mode::Normal => self.normal_mode_keybinding(key),
-                    Mode::Insert => self.insert_mode_keybinding(key),
-                    Mode::Visual => todo!(),
-                };
-
-                context.on_actions(actions);
+        if let Event::Key(key) = crossterm::event::read().unwrap() {
+            if key.kind == KeyEventKind::Release {
+                return None;
             }
-            _ => (),
+
+            let actions = match context.mode {
+                Mode::Normal => self.normal_mode_keybinding(key),
+                Mode::Insert => self.insert_mode_keybinding(key),
+                Mode::Visual => todo!(),
+            };
+
+            context.on_action(actions);
         }
 
         None
@@ -121,18 +125,33 @@ impl Client<VectorEditor> for ConsoleClient {
             return;
         }
 
-        self.pre_draw().unwrap();
+        if let Some(redraw) = context.should_redraw {
+            self.pre_draw(redraw).unwrap();
+        }
 
         let mut line_num = 0;
 
-        while let Some(line) = context.content.get_line(line_num) {
-            // for (line_num, line) in lines {
-            if self.line_numbered {
-                print!("{:>4}  ", line_num + 1);
-            }
+        match context.should_redraw {
+            Some(Redraw::All) => {
+                while let Some(line) = context.content.get_line(line_num) {
+                    // for (line_num, line) in lines {
+                    if self.line_numbered {
+                        print!("{:>4}  ", line_num + 1);
+                    }
 
-            println!("{}", line);
-            line_num += 1;
+                    println!("{}", line);
+                    line_num += 1;
+                }
+            }
+            Some(Redraw::Line(line)) => {
+                self.stdout.execute(MoveTo(0, line as u16)).unwrap();
+                if self.line_numbered {
+                    print!("{:>4}  ", line + 1);
+                }
+                println!("{}", context.content.get_line(line).unwrap());
+            }
+            Some(Redraw::Range(_, _)) => todo!(),
+            None => (),
         }
 
         let cursor_x = context.render_col + 6;
@@ -146,6 +165,7 @@ impl Client<VectorEditor> for ConsoleClient {
 
         let _result = execute!(
             self.stdout,
+            cursor::Show,
             carret,
             cursor::MoveTo(cursor_x as u16, cursor_y as u16)
         );
