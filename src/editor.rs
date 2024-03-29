@@ -1,10 +1,15 @@
-use std::{cmp, fs::File, io::Read, ops::Add, process::exit};
+use std::{cmp, fs::File, io::Read, process::exit};
 
 use log::{error, info};
 
+use self::actions::Action;
+
+pub mod actions;
+
 pub type VectorEditor = Editor<Vec<char>>;
 
-enum Movement {
+#[derive(Clone, Copy)]
+pub enum Movement {
     Up,
     Down,
     Left,
@@ -13,6 +18,7 @@ enum Movement {
     LineStart,
 }
 
+#[derive(Clone, Copy)]
 pub enum Mode {
     Normal,
     Insert,
@@ -35,7 +41,7 @@ pub trait EditorIO {
 
 pub trait EditorEvent {
     fn on_load_file(&mut self, path: String);
-    fn on_write(&mut self, keycode: u32);
+    fn on_actions(&mut self, action: Vec<Action>);
 }
 
 impl VectorEditor {
@@ -101,6 +107,14 @@ impl VectorEditor {
 
         self.render_col = cmp::min(line_len, self.col);
     }
+
+    fn write_char(&mut self, c: char) {
+        self.content.write_char(c, self.render_col, self.row);
+    }
+
+    fn delete_char(&mut self) {
+        self.content.delete_char(self.render_col, self.row);
+    }
 }
 
 impl EditorIO for VectorEditor {
@@ -127,87 +141,113 @@ impl EditorEvent for VectorEditor {
         self.file_path = Some(path);
     }
 
-    fn on_write(&mut self, keycode: u32) {
-        match char::from_u32(keycode) {
-            // UP
-            _ if keycode == 0x26 => {
-                self.move_cursor(Movement::Up);
-            }
-            // DOWN
-            _ if keycode == 0x28 => {
-                self.move_cursor(Movement::Down);
-            }
-            // LEFT
-            _ if keycode == 0x25 => {
-                self.move_cursor(Movement::Left);
-            }
-            // RIGHT
-            _ if keycode == 0x27 => {
-                self.move_cursor(Movement::Right);
-            }
-            _ => (),
-        }
-
-        match self.mode {
-            Mode::Normal => match char::from_u32(keycode) {
-                Some('h') => {
+    fn on_actions(&mut self, actions: Vec<Action>) {
+        actions.iter().for_each(|action| {
+            match *action {
+                Action::Move(mov) => {
+                    self.move_cursor(mov);
+                }
+                Action::ChangeMode(mode) => {
+                    self.mode = mode;
+                }
+                Action::InsertChar(c) => {
+                    self.write_char(c);
+                    self.move_cursor(Movement::Right);
+                }
+                Action::Backspace => {
                     self.move_cursor(Movement::Left);
+                    self.delete_char();
                 }
-                Some('j') => {
-                    self.move_cursor(Movement::Down);
+                Action::Delete => {
+                    self.delete_char();
                 }
-                Some('k') => {
-                    self.move_cursor(Movement::Up);
-                }
-                Some('l') => {
-                    self.move_cursor(Movement::Right);
-                }
-                Some('i') => self.mode = Mode::Insert,
-                Some('a') => {
-                    self.move_cursor(Movement::Right);
-                    self.mode = Mode::Insert;
-                }
-                Some('I') => {
-                    self.move_cursor(Movement::LineStart);
-                    self.mode = Mode::Insert;
-                }
-                Some('A') => {
-                    self.move_cursor(Movement::LineEnd);
-                    self.mode = Mode::Insert;
-                }
-                Some('q') => {
+                Action::Quit => {
                     exit(0);
                 }
-                _ => {
-                    if keycode == 0x1B {
-                        exit(0);
-                    }
-                }
-            },
-            Mode::Insert => {
-                // ESC
-                if keycode == 0x1B {
-                    self.mode = Mode::Normal;
-                    return;
-                }
-                if keycode == 0x08 {
-                    if !(self.col == 0 && self.row == 0) {
-                        self.move_cursor(Movement::Left);                    
-                        self.content.delete_char(self.render_col, self.row);
-                    }
-                    return;
-                }
+                _ => (),
+            };
+        });
 
-                match char::from_u32(keycode) {
-                    Some(c) => {
-                        self.content.write_char(c, self.render_col, self.row);
-                        self.move_cursor(Movement::Right);
-                    }
-                    _ => (),
-                }
-            }
-            Mode::Visual => todo!(),
-        }
+        //     match char::from_u32(keycode) {
+        //         // UP
+        //         _ if keycode == 0x26 => {
+        //             self.move_cursor(Movement::Up);
+        //         }
+        //         // DOWN
+        //         _ if keycode == 0x28 => {
+        //             self.move_cursor(Movement::Down);
+        //         }
+        //         // LEFT
+        //         _ if keycode == 0x25 => {
+        //             self.move_cursor(Movement::Left);
+        //         }
+        //         // RIGHT
+        //         _ if keycode == 0x27 => {
+        //             self.move_cursor(Movement::Right);
+        //         }
+        //         _ => (),
+        //     }
+
+        //     match self.mode {
+        //         Mode::Normal => match char::from_u32(keycode) {
+        //             Some('h') => {
+        //                 self.move_cursor(Movement::Left);
+        //             }
+        //             Some('j') => {
+        //                 self.move_cursor(Movement::Down);
+        //             }
+        //             Some('k') => {
+        //                 self.move_cursor(Movement::Up);
+        //             }
+        //             Some('l') => {
+        //                 self.move_cursor(Movement::Right);
+        //             }
+        //             Some('i') => self.mode = Mode::Insert,
+        //             Some('a') => {
+        //                 self.move_cursor(Movement::Right);
+        //                 self.mode = Mode::Insert;
+        //             }
+        //             Some('I') => {
+        //                 self.move_cursor(Movement::LineStart);
+        //                 self.mode = Mode::Insert;
+        //             }
+        //             Some('A') => {
+        //                 self.move_cursor(Movement::LineEnd);
+        //                 self.mode = Mode::Insert;
+        //             }
+        //             Some('q') => {
+        //                 exit(0);
+        //             }
+        //             _ => {
+        //                 if keycode == 0x1B {
+        //                     exit(0);
+        //                 }
+        //             }
+        //         },
+        //         Mode::Insert => {
+        //             // ESC
+        //             if keycode == 0x1B {
+        //                 self.mode = Mode::Normal;
+        //                 return;
+        //             }
+        //             if keycode == 0x08 {
+        //                 if !(self.col == 0 && self.row == 0) {
+        //                     self.move_cursor(Movement::Left);
+        //                     self.content.delete_char(self.render_col, self.row);
+        //                 }
+        //                 return;
+        //             }
+
+        //             match char::from_u32(keycode) {
+        //                 Some(c) => {
+        //                     self.content.write_char(c, self.render_col, self.row);
+        //                     self.move_cursor(Movement::Right);
+        //                 }
+        //                 _ => (),
+        //             }
+        //         }
+        //         Mode::Visual => todo!(),
+        //     }
     }
 }
 
@@ -243,7 +283,7 @@ impl EditorContent<Vec<char>> {
             if line_count == row && col_count == col {
                 break;
             }
-            
+
             i += 1;
             if *c_ref == '\n' {
                 line_count += 1;
@@ -276,12 +316,12 @@ impl EditorContentTrait for EditorContent<Vec<char>> {
             .map(|l| l.iter().collect())
             .nth(i as usize)
     }
-    
+
     fn get_line_len(&self, i: u32) -> Option<u32> {
         Some(self.get_line(i)?.len() as u32)
     }
 
-    fn write_char(&mut self, c: char, col: u32, row: u32) {        
+    fn write_char(&mut self, c: char, col: u32, row: u32) {
         if let Some(i) = self.get_pos(col, row) {
             self.data.insert(i, c);
         }

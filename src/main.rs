@@ -10,13 +10,12 @@ mod editor;
 mod logger;
 
 fn main() {
-    logger::init().unwrap_or_else(|_err| panic!("Error an Logger initialization!"));
+    logger::init().unwrap();
 
     let mut editor = Editor::new();
     let mut client = ConsoleClient::new(true);
 
-    let mut args = env::args();
-    args.next();
+    let mut args = env::args().skip(1);
     let path_arg = args.next();
 
     client.load();

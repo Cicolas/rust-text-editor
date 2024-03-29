@@ -2,13 +2,15 @@ use std::io::{stdout, Stdout};
 
 use crossterm::{
     cursor::{self, MoveTo, SetCursorStyle},
-    event::{read, Event, KeyCode, KeyEventKind},
+    event::{read, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
     ExecutableCommand,
 };
 
-use crate::editor::{EditorContentTrait, EditorEvent, Mode, VectorEditor};
+use crate::editor::{
+    actions::Action, EditorContentTrait, EditorEvent, Mode, Movement, VectorEditor,
+};
 
 pub struct ConsoleClient {
     stdout: Stdout,
@@ -34,6 +36,55 @@ impl ConsoleClient {
             .execute(Clear(ClearType::All))?
             .execute(MoveTo(0, 0))
     }
+
+    fn normal_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char(c) => match c {
+                'k' => vec![Action::Move(Movement::Up)],
+                'j' => vec![Action::Move(Movement::Down)],
+                'h' => vec![Action::Move(Movement::Left)],
+                'l' => vec![Action::Move(Movement::Right)],
+                'q' => vec![Action::Quit],
+                'i' => vec![Action::ChangeMode(Mode::Insert)],
+                'I' => vec![
+                    Action::Move(Movement::LineStart),
+                    Action::ChangeMode(Mode::Insert),
+                ],
+                'a' => vec![
+                    Action::Move(Movement::Right),
+                    Action::ChangeMode(Mode::Insert),
+                ],
+                'A' => vec![
+                    Action::Move(Movement::LineEnd),
+                    Action::ChangeMode(Mode::Insert),
+                ],
+                _ => vec![Action::None],
+            },
+            KeyCode::Backspace => vec![Action::Move(Movement::Left)],
+            KeyCode::Enter => vec![Action::Move(Movement::Down)],
+            KeyCode::Esc => vec![Action::Quit],
+            KeyCode::Up => vec![Action::Move(Movement::Up)],
+            KeyCode::Down => vec![Action::Move(Movement::Down)],
+            KeyCode::Left => vec![Action::Move(Movement::Left)],
+            KeyCode::Right => vec![Action::Move(Movement::Right)],
+            _ => vec![Action::None],
+        }
+    }
+
+    fn insert_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char(c) => vec![Action::InsertChar(c)],
+            KeyCode::Backspace => vec![Action::Backspace],
+            KeyCode::Delete => vec![Action::Delete],
+            KeyCode::Up => vec![Action::Move(Movement::Up)],
+            KeyCode::Down => vec![Action::Move(Movement::Down)],
+            KeyCode::Left => vec![Action::Move(Movement::Left)],
+            KeyCode::Right => vec![Action::Move(Movement::Right)],
+            KeyCode::Esc => vec![Action::ChangeMode(Mode::Normal)],
+            KeyCode::Enter => vec![Action::InsertChar('\n')],
+            _ => vec![Action::None],
+        }
+    }
 }
 
 impl Client<VectorEditor> for ConsoleClient {
@@ -50,19 +101,13 @@ impl Client<VectorEditor> for ConsoleClient {
                     return None;
                 }
 
-                let code = match key.code {
-                    KeyCode::Char(c)   => c as u32,
-                    KeyCode::Backspace => 0x08,
-                    KeyCode::Enter     => 0x0D,
-                    KeyCode::Esc       => 0x1B,
-                    KeyCode::Up        => 0x26,
-                    KeyCode::Down      => 0x28,
-                    KeyCode::Left      => 0x25,
-                    KeyCode::Right     => 0x27,
-                    _                  => 0
+                let actions = match context.mode {
+                    Mode::Normal => self.normal_mode_keybinding(key),
+                    Mode::Insert => self.insert_mode_keybinding(key),
+                    Mode::Visual => todo!(),
                 };
 
-                context.on_write(code);
+                context.on_actions(actions);
             }
             _ => (),
         }
