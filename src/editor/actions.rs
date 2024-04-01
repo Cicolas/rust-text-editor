@@ -8,4 +8,8 @@ pub enum Action {
     Delete,
     Quit,
     None,
+
+    OpenFile(String),
+    WriteFile(String),
+    SaveFile,
 }

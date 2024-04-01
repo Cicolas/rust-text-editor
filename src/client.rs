@@ -67,6 +67,7 @@ impl ConsoleClient {
                 Action::Move(Movement::LineEnd),
                 Action::ChangeMode(Mode::Insert),
             ],
+            KeyCode::Char('s') => vec![Action::SaveFile],
             KeyCode::Backspace => vec![Action::Move(Movement::Left)],
             KeyCode::Enter => vec![Action::Move(Movement::Down)],
             KeyCode::Esc => vec![Action::Quit],
