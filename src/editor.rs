@@ -1,4 +1,9 @@
-use std::{cmp, fs::File, io::Read, process::exit};
+use std::{
+    cmp,
+    fs::File,
+    io::{Read, Write},
+    process::exit,
+};
 
 use log::{error, info};
 
@@ -38,7 +43,8 @@ pub struct Editor<T> {
 
 pub trait EditorIO {
     fn open_file(&mut self, path: &str) -> Result<(), std::io::Error>;
-    fn write_file(path: &str, data: Vec<u8>);
+    fn save_file(&self) -> Result<(), std::io::Error>;
+    fn write_file(&self, path: &str) -> Result<(), std::io::Error>;
 }
 
 pub trait EditorEvent {
@@ -122,6 +128,7 @@ impl VectorEditor {
 
 impl EditorIO for VectorEditor {
     fn open_file(&mut self, path: &str) -> Result<(), std::io::Error> {
+        self.file_path = Some(path.to_string());
         let mut file = File::open(path)?;
         let mut buf: Vec<u8> = Vec::new();
         file.read_to_end(&mut buf)?;
@@ -129,8 +136,25 @@ impl EditorIO for VectorEditor {
         Ok(())
     }
 
-    fn write_file(path: &str, data: Vec<u8>) {
-        todo!()
+    fn save_file(&self) -> Result<(), std::io::Error> {
+        if let Some(path) = &self.file_path {
+            let mut file = File::create(path)?;
+            let mut buf: Vec<u8> = Vec::new();
+            self.content.read_data(&mut buf);
+            file.write_all(&buf)?;
+            return Ok(());
+        }
+
+        error!("there isn't any file opened!");
+        Ok(())
+    }
+
+    fn write_file(&self, path: &str) -> Result<(), std::io::Error> {
+        let mut file = File::create(path)?;
+        let mut buf: Vec<u8> = Vec::new();
+        self.content.read_data(&mut buf);
+        file.write_all(&buf)?;
+        Ok(())
     }
 }
 
@@ -186,6 +210,9 @@ impl EditorEvent for VectorEditor {
                         }
                     }
                 }
+                Action::SaveFile => {
+                    self.save_file().unwrap();
+                }
                 Action::Quit => {
                     exit(0);
                 }
@@ -201,10 +228,12 @@ fn is_crlf(c: char) -> bool {
 
 pub struct EditorContent<T> {
     data: T,
+    is_crlf: bool,
 }
 
 pub trait EditorContentTrait {
     fn load_data(&mut self, raw_data: Vec<u8>);
+    fn read_data(&self, buffer: &mut Vec<u8>);
     fn get_line(&self, i: u32) -> Option<String>;
     fn get_line_len(&self, i: u32) -> Option<u32>;
     fn write_char(&mut self, c: char, col: u32, row: u32);
@@ -215,6 +244,7 @@ impl EditorContent<Vec<char>> {
     fn new() -> EditorContent<Vec<char>> {
         Self {
             data: Vec::<char>::new(),
+            is_crlf: true,
         }
     }
 
@@ -237,7 +267,7 @@ impl EditorContent<Vec<char>> {
             }
         }
 
-        if i < self.data.len() {
+        if i <= self.data.len() {
             Some(i as usize)
         } else {
             None
@@ -277,5 +307,22 @@ impl EditorContentTrait for EditorContent<Vec<char>> {
         }
 
         None
+    }
+
+    fn read_data(&self, buffer: &mut Vec<u8>) {
+        let data_bytes: Vec<u8> = self
+            .data
+            .iter()
+            .map(|c| c.to_string().into_bytes())
+            .map(|c| {
+                if c[0] == 0x0A && self.is_crlf {
+                    vec![0x0D, 0x0A]
+                } else {
+                    c
+                }
+            })
+            .flatten()
+            .collect();
+        buffer.write(&data_bytes).unwrap();
     }
 }
