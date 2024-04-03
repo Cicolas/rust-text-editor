@@ -7,13 +7,7 @@ use std::{
 
 use log::{error, info};
 
-use self::{actions::Action, redraw::Redraw};
-
-pub mod actions;
-pub mod redraw;
-
-type VectorEditor<T> = Editor<EditorContent<Vec<T>>>;
-pub type CharVectorEditor = VectorEditor<char>;
+pub mod vector;
 
 #[derive(Clone, Copy)]
 pub enum Movement {
@@ -25,11 +19,57 @@ pub enum Movement {
     LineStart,
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 pub enum Mode {
     Normal,
     Insert,
     Visual,
+}
+
+#[allow(unused)]
+pub enum Action {
+    Move(Movement),
+    ChangeMode(Mode),
+    InsertChar(char),
+    Backspace,
+    Delete,
+    Quit,
+    None,
+
+    ScrollBy(i32),
+    ScrollTo(u32),
+    Resize(u16),
+
+    OpenFile(String),
+    WriteFile(String),
+    SaveFile,
+
+    AskRedraw(Redraw),
+}
+
+#[allow(unused)]
+#[derive(Clone, Copy)]
+pub enum Redraw {
+    All,
+    Line(u32),
+    Range(u32, u32),
+}
+
+pub trait EditorIO {
+    fn open_file(&mut self, path: &str) -> Result<(), std::io::Error>;
+    fn save_file(&self) -> Result<(), std::io::Error>;
+    fn write_file(&self, path: &str) -> Result<(), std::io::Error>;
+}
+
+pub trait EditorEvent {
+    fn on_load_file(&mut self, path: String);
+    fn on_action(&mut self, action: Vec<Action>);
+}
+
+pub struct EditorContent<T> {
+    data: T,
+    is_crlf: bool,
 }
 
 pub struct Editor<T: EditorContentTrait> {
@@ -45,22 +85,11 @@ pub struct Editor<T: EditorContentTrait> {
     pub view_end: u32,
 }
 
-pub trait EditorIO {
-    fn open_file(&mut self, path: &str) -> Result<(), std::io::Error>;
-    fn save_file(&self) -> Result<(), std::io::Error>;
-    fn write_file(&self, path: &str) -> Result<(), std::io::Error>;
-}
-
-pub trait EditorEvent {
-    fn on_load_file(&mut self, path: String);
-    fn on_action(&mut self, action: Vec<Action>);
-}
-
 impl<T: EditorContentTrait> Editor<T> {
-    pub fn new(content: T) -> Self {
+    pub fn new() -> Self {
         Self {
             file_path: None,
-            content,
+            content: T::new(),
             render_row: 0,
             row: 0,
             render_col: 0,
@@ -71,7 +100,7 @@ impl<T: EditorContentTrait> Editor<T> {
             view_end: 0,
         }
     }
-
+    
     fn move_cursor(&mut self, movement: Movement) {
         let line = self
             .content
@@ -164,7 +193,7 @@ impl<T: EditorContentTrait> Editor<T> {
     }
 }
 
-impl EditorIO for CharVectorEditor {
+impl<T: EditorContentTrait> EditorIO for Editor<T> {
     fn open_file(&mut self, path: &str) -> Result<(), std::io::Error> {
         self.file_path = Some(path.to_string());
         let mut file = File::open(path)?;
@@ -196,12 +225,12 @@ impl EditorIO for CharVectorEditor {
     }
 }
 
-impl EditorEvent for CharVectorEditor {
+impl<T: EditorContentTrait> EditorEvent for Editor<T> {
     fn on_load_file(&mut self, path: String) {
         info!("loading file '{}'", path);
 
         self.open_file(path.as_str())
-            .unwrap_or_else(|_err| error!("error while loading"));
+            .unwrap();
 
         self.file_path = Some(path);
     }
@@ -275,109 +304,13 @@ impl EditorEvent for CharVectorEditor {
     }
 }
 
-fn is_crlf(c: char) -> bool {
-    return c == '\n' || c == '\r';
-}
-
-pub struct EditorContent<T> {
-    data: T,
-    is_crlf: bool,
-}
-
 pub trait EditorContentTrait {
+    fn new() -> Self;
+
     fn load_data(&mut self, raw_data: Vec<u8>);
     fn read_data(&self, buffer: &mut Vec<u8>);
     fn get_line(&self, i: u32) -> Option<String>;
     fn get_line_len(&self, i: u32) -> Option<u32>;
     fn write_char(&mut self, c: char, col: u32, row: u32);
     fn delete_char(&mut self, col: u32, row: u32) -> Option<char>;
-}
-
-impl EditorContent<Vec<char>> {
-    pub fn new() -> EditorContent<Vec<char>> {
-        Self {
-            data: Vec::<char>::new(),
-            is_crlf: true,
-        }
-    }
-
-    fn get_pos(&self, col: u32, row: u32) -> Option<usize> {
-        let mut line_count = 0;
-        let mut col_count = 0;
-        let mut i = 0;
-
-        while let Some(c_ref) = self.data.get(i) {
-            if line_count == row && col_count == col {
-                break;
-            }
-
-            i += 1;
-            if *c_ref == '\n' {
-                line_count += 1;
-                col_count = 0;
-            } else {
-                col_count += 1;
-            }
-        }
-
-        if i <= self.data.len() {
-            Some(i as usize)
-        } else {
-            None
-        }
-    }
-}
-
-impl EditorContentTrait for EditorContent<Vec<char>> {
-    fn load_data(&mut self, raw_data: Vec<u8>) {
-        self.data = raw_data
-            .iter()
-            .map(|c| *c as char)
-            .filter(|c| *c != '\r')
-            .collect();
-    }
-
-    fn get_line(&self, i: u32) -> Option<String> {
-        self.data
-            .split(|c| is_crlf(*c))
-            .map(|l| l.iter().collect())
-            .nth(i as usize)
-    }
-
-    fn get_line_len(&self, i: u32) -> Option<u32> {
-        Some(self.get_line(i)?.len() as u32)
-    }
-
-    fn write_char(&mut self, c: char, col: u32, row: u32) {
-        if let Some(i) = self.get_pos(col, row) {
-            self.data.insert(i, c);
-        }
-    }
-
-    fn delete_char(&mut self, col: u32, row: u32) -> Option<char> {
-        if let Some(i) = self.get_pos(col, row) {
-            if i < self.data.len() {
-                return Some(self.data.remove(i));
-            }
-        }
-
-        None
-    }
-
-    fn read_data(&self, buffer: &mut Vec<u8>) {
-        let data_bytes: Vec<u8> = self
-            .data
-            .iter()
-            .map(|c| c.to_string().into_bytes())
-            .map(|c| {
-                if c[0] == 0x0A && self.is_crlf {
-                    vec![0x0D, 0x0A]
-                } else {
-                    c
-                }
-            })
-            .flatten()
-            .collect();
-        buffer.write(&data_bytes).unwrap();
-    }
 }
