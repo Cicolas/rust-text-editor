@@ -1,4 +1,7 @@
-use std::io::{stdout, Cursor, Stdout};
+use std::{
+    cmp,
+    io::{stdout, Cursor, Stdout},
+};
 
 use crossterm::{
     cursor::{self, MoveTo, SetCursorStyle},
@@ -47,6 +50,33 @@ impl ConsoleClient {
         // self.stdout.execute(cursor::Hide)?.execute(MoveTo(0, 0))
     }
 
+    fn draw_line(&self, line_num: u32, content: String) {
+        if self.line_numbered {
+            print!("{:>4}  ", line_num + 1);
+        }
+
+        println!("{}", content);
+    }
+
+    fn draw_cursor(&mut self, col: u32, row: u32, mode: Mode, view_start: u32) {
+        let render_col = col;
+        let render_row = row - view_start;
+
+        let carret = match mode {
+            Mode::Normal => SetCursorStyle::SteadyBlock,
+            Mode::Insert => SetCursorStyle::BlinkingBar,
+            Mode::Visual => SetCursorStyle::SteadyUnderScore,
+        };
+
+        execute!(
+            self.stdout,
+            cursor::Show,
+            carret,
+            cursor::MoveTo((render_col + 6) as u16, render_row as u16)
+        )
+        .unwrap();
+    }
+
     fn normal_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
         match key.code {
             KeyCode::Char('k') => vec![Action::Move(Movement::Up)],
@@ -68,6 +98,8 @@ impl ConsoleClient {
                 Action::ChangeMode(Mode::Insert),
             ],
             KeyCode::Char('s') => vec![Action::SaveFile],
+            KeyCode::PageDown => vec![Action::ScrollBy(1), Action::AskRedraw(Redraw::All)],
+            KeyCode::PageUp => vec![Action::ScrollBy(-1), Action::AskRedraw(Redraw::All)],
             KeyCode::Backspace => vec![Action::Move(Movement::Left)],
             KeyCode::Enter => vec![Action::Move(Movement::Down)],
             KeyCode::Esc => vec![Action::Quit],
@@ -103,18 +135,24 @@ impl Client<VectorEditor> for ConsoleClient {
     }
 
     fn update(&mut self, context: &mut VectorEditor) -> Option<u8> {
-        if let Event::Key(key) = crossterm::event::read().unwrap() {
-            if key.kind == KeyEventKind::Release {
-                return None;
+        let event = crossterm::event::read();
+
+        match event {
+            Ok(Event::Key(key)) => {
+                if key.kind == KeyEventKind::Release {
+                    return None;
+                }
+
+                let actions = match context.mode {
+                    Mode::Normal => self.normal_mode_keybinding(key),
+                    Mode::Insert => self.insert_mode_keybinding(key),
+                    Mode::Visual => todo!(),
+                };
+
+                context.on_action(actions);
             }
-
-            let actions = match context.mode {
-                Mode::Normal => self.normal_mode_keybinding(key),
-                Mode::Insert => self.insert_mode_keybinding(key),
-                Mode::Visual => todo!(),
-            };
-
-            context.on_action(actions);
+            Ok(Event::Resize(_, h)) => context.on_action(vec![Action::Resize(h - 1)]),
+            _ => (),
         }
 
         None
@@ -130,45 +168,35 @@ impl Client<VectorEditor> for ConsoleClient {
             self.pre_draw(redraw).unwrap();
         }
 
-        let mut line_num = 0;
+        let mut line_num = context.view_start;
 
         match context.should_redraw {
             Some(Redraw::All) => {
                 while let Some(line) = context.content.get_line(line_num) {
-                    // for (line_num, line) in lines {
-                    if self.line_numbered {
-                        print!("{:>4}  ", line_num + 1);
+                    if line_num > context.view_end {
+                        break;
                     }
-
-                    println!("{}", line);
+                    self.draw_line(line_num, line);
                     line_num += 1;
                 }
             }
             Some(Redraw::Line(line)) => {
-                self.stdout.execute(MoveTo(0, line as u16)).unwrap();
-                if self.line_numbered {
-                    print!("{:>4}  ", line + 1);
+                if line >= context.view_start && line < context.view_end {
+                    self.stdout
+                        .execute(MoveTo(0, (context.view_start - line) as u16))
+                        .unwrap();
+                    self.draw_line(line, context.content.get_line(line).unwrap());
                 }
-                println!("{}", context.content.get_line(line).unwrap());
             }
             Some(Redraw::Range(_, _)) => todo!(),
             None => (),
         }
 
-        let cursor_x = context.render_col + 6;
-        let cursor_y = context.row;
-
-        let carret = match context.mode {
-            Mode::Normal => SetCursorStyle::SteadyBlock,
-            Mode::Insert => SetCursorStyle::BlinkingBar,
-            Mode::Visual => SetCursorStyle::SteadyUnderScore,
-        };
-
-        let _result = execute!(
-            self.stdout,
-            cursor::Show,
-            carret,
-            cursor::MoveTo(cursor_x as u16, cursor_y as u16)
+        self.draw_cursor(
+            context.render_col,
+            context.render_row,
+            context.mode,
+            context.view_start,
         );
     }
 }

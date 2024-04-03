@@ -1,4 +1,4 @@
-use super::{Mode, Movement};
+use super::{redraw::Redraw, Mode, Movement};
 
 pub enum Action {
     Move(Movement),
@@ -9,7 +9,13 @@ pub enum Action {
     Quit,
     None,
 
+    ScrollBy(i32),
+    ScrollTo(u32),
+    Resize(u16),
+
     OpenFile(String),
     WriteFile(String),
     SaveFile,
+
+    AskRedraw(Redraw),
 }
