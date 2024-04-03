@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    io::{stdout, Cursor, Stdout},
+    io::{stdout, Stdout},
 };
 
 use crossterm::{
@@ -8,12 +8,13 @@ use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
-    ExecutableCommand, QueueableCommand,
+    ExecutableCommand,
 };
 use log::info;
 
 use crate::editor::{
-    actions::Action, redraw::Redraw, EditorContentTrait, EditorEvent, Mode, Movement, VectorEditor,
+    actions::Action, redraw::Redraw, CharVectorEditor, EditorContentTrait, EditorEvent, EditorIO,
+    Mode, Movement,
 };
 
 pub struct ConsoleClient {
@@ -21,7 +22,10 @@ pub struct ConsoleClient {
     line_numbered: bool,
 }
 
-pub trait Client<T> {
+pub trait ClientTrait<T>
+where
+    T: EditorEvent + EditorIO,
+{
     fn load(&mut self);
     fn update(&mut self, context: &mut T) -> Option<u8>;
     fn draw(&mut self, context: &T);
@@ -127,14 +131,14 @@ impl ConsoleClient {
     }
 }
 
-impl Client<VectorEditor> for ConsoleClient {
+impl ClientTrait<CharVectorEditor> for ConsoleClient {
     fn load(&mut self) {
         enable_raw_mode().unwrap();
 
         execute!(self.stdout, terminal::EnterAlternateScreen).unwrap();
     }
 
-    fn update(&mut self, context: &mut VectorEditor) -> Option<u8> {
+    fn update(&mut self, context: &mut CharVectorEditor) -> Option<u8> {
         let event = crossterm::event::read();
 
         match event {
@@ -158,7 +162,7 @@ impl Client<VectorEditor> for ConsoleClient {
         None
     }
 
-    fn draw(&mut self, context: &VectorEditor) {
+    fn draw(&mut self, context: &CharVectorEditor) {
         if context.file_path.is_none() {
             println!("no file provided!");
             return;
@@ -181,12 +185,12 @@ impl Client<VectorEditor> for ConsoleClient {
                 }
             }
             Some(Redraw::Line(line)) => {
-                if line >= context.view_start && line < context.view_end {
-                    self.stdout
-                        .execute(MoveTo(0, (context.view_start - line) as u16))
-                        .unwrap();
-                    self.draw_line(line, context.content.get_line(line).unwrap());
-                }
+                let clear_row = cmp::max(0, line as i32 - context.view_start as i32);
+                info!("\n{}-{}", context.view_start, line);
+                // if line >= context.view_start && line < context.view_end {
+                self.stdout.execute(MoveTo(0, clear_row as u16)).unwrap();
+                self.draw_line(line, context.content.get_line(line).unwrap());
+                // }
             }
             Some(Redraw::Range(_, _)) => todo!(),
             None => (),

@@ -12,7 +12,8 @@ use self::{actions::Action, redraw::Redraw};
 pub mod actions;
 pub mod redraw;
 
-pub type VectorEditor = Editor<Vec<char>>;
+type VectorEditor<T> = Editor<EditorContent<Vec<T>>>;
+pub type CharVectorEditor = VectorEditor<char>;
 
 #[derive(Clone, Copy)]
 pub enum Movement {
@@ -31,9 +32,9 @@ pub enum Mode {
     Visual,
 }
 
-pub struct Editor<T> {
+pub struct Editor<T: EditorContentTrait> {
     pub file_path: Option<String>,
-    pub content: EditorContent<T>,
+    pub content: T,
     pub render_row: u32,
     pub row: u32,
     pub render_col: u32,
@@ -55,11 +56,11 @@ pub trait EditorEvent {
     fn on_action(&mut self, action: Vec<Action>);
 }
 
-impl VectorEditor {
-    pub fn new() -> Self {
+impl<T: EditorContentTrait> Editor<T> {
+    pub fn new(content: T) -> Self {
         Self {
             file_path: None,
-            content: EditorContent::<Vec<char>>::new(),
+            content,
             render_row: 0,
             row: 0,
             render_col: 0,
@@ -113,6 +114,7 @@ impl VectorEditor {
             Movement::Right => {
                 self.col += 1;
 
+                // TODO: skiping single-line file
                 if self.col > line_len {
                     self.col = 0;
                     self.row += 1;
@@ -162,7 +164,7 @@ impl VectorEditor {
     }
 }
 
-impl EditorIO for VectorEditor {
+impl EditorIO for CharVectorEditor {
     fn open_file(&mut self, path: &str) -> Result<(), std::io::Error> {
         self.file_path = Some(path.to_string());
         let mut file = File::open(path)?;
@@ -194,7 +196,7 @@ impl EditorIO for VectorEditor {
     }
 }
 
-impl EditorEvent for VectorEditor {
+impl EditorEvent for CharVectorEditor {
     fn on_load_file(&mut self, path: String) {
         info!("loading file '{}'", path);
 
@@ -266,6 +268,7 @@ impl EditorEvent for VectorEditor {
                 Action::Quit => {
                     exit(0);
                 }
+                Action::None => {}
                 _ => todo!(),
             };
         });
@@ -291,7 +294,7 @@ pub trait EditorContentTrait {
 }
 
 impl EditorContent<Vec<char>> {
-    fn new() -> EditorContent<Vec<char>> {
+    pub fn new() -> EditorContent<Vec<char>> {
         Self {
             data: Vec::<char>::new(),
             is_crlf: true,
@@ -353,7 +356,9 @@ impl EditorContentTrait for EditorContent<Vec<char>> {
 
     fn delete_char(&mut self, col: u32, row: u32) -> Option<char> {
         if let Some(i) = self.get_pos(col, row) {
-            return Some(self.data.remove(i));
+            if i < self.data.len() {
+                return Some(self.data.remove(i));
+            }
         }
 
         None
