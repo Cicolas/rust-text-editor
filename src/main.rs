@@ -1,9 +1,9 @@
 use std::env;
 
 use client::ConsoleClient;
-use editor::{Editor, EditorEvent};
+use editor::{Editor, EditorContent, EditorEvent};
 
-use crate::client::Client;
+use crate::client::ClientTrait;
 
 mod client;
 mod editor;
@@ -12,7 +12,7 @@ mod logger;
 fn main() {
     logger::init().unwrap();
 
-    let mut editor = Editor::new();
+    let mut editor = Editor::new(EditorContent::<Vec<char>>::new());
     let mut client = ConsoleClient::new(true);
 
     let mut args = env::args().skip(1);
