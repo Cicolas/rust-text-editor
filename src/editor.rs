@@ -34,11 +34,14 @@ pub enum Mode {
 pub struct Editor<T> {
     pub file_path: Option<String>,
     pub content: EditorContent<T>,
+    pub render_row: u32,
     pub row: u32,
     pub render_col: u32,
     pub col: u32,
     pub mode: Mode,
     pub should_redraw: Option<Redraw>,
+    pub view_start: u32,
+    pub view_end: u32,
 }
 
 pub trait EditorIO {
@@ -57,27 +60,45 @@ impl VectorEditor {
         Self {
             file_path: None,
             content: EditorContent::<Vec<char>>::new(),
+            render_row: 0,
             row: 0,
             render_col: 0,
             col: 0,
             mode: Mode::Normal,
             should_redraw: Some(Redraw::All),
+            view_start: 0,
+            view_end: 0,
         }
     }
 
     fn move_cursor(&mut self, movement: Movement) {
         let line = self
             .content
-            .get_line(self.row)
+            .get_line(self.render_row)
             .unwrap_or(String::from("\n"));
         let mut line_len = line.len() as u32;
         let mut wrap_left = false;
 
+        if self.render_row != self.row {
+            self.row = self.render_row;
+            self.col = self.render_col;
+        }
+
         match movement {
             Movement::Up => {
+                if self.render_row == self.view_start {
+                    self.scroll_to(self.view_start as i32 - 1);
+                    self.should_redraw = Some(Redraw::All);
+                }
+
                 self.row = cmp::max(0, self.row as i32 - 1) as u32;
             }
             Movement::Down => {
+                if self.render_row == self.view_end {
+                    self.scroll_to(self.view_start as i32 + 1);
+                    self.should_redraw = Some(Redraw::All);
+                }
+
                 self.row += 1;
             }
             Movement::Left => {
@@ -115,6 +136,7 @@ impl VectorEditor {
         }
 
         self.render_col = cmp::min(line_len, self.col);
+        self.render_row = cmp::min(cmp::max(self.view_start, self.row), self.view_end);
     }
 
     fn write_char(&mut self, c: char) {
@@ -123,6 +145,20 @@ impl VectorEditor {
 
     fn delete_char(&mut self) -> Option<char> {
         self.content.delete_char(self.render_col, self.row)
+    }
+
+    fn scroll_to(&mut self, line_num: i32) {
+        let view_size = self.view_end - self.view_start;
+
+        self.view_start = cmp::max(0, line_num) as u32;
+        self.view_end = self.view_start + view_size;
+
+        self.render_row = cmp::min(cmp::max(self.view_start, self.row), self.view_end);
+
+        match self.content.get_line_len(self.render_row) {
+            Some(n) => self.render_col = cmp::min(self.col, n),
+            None => (),
+        }
     }
 }
 
@@ -210,13 +246,27 @@ impl EditorEvent for VectorEditor {
                         }
                     }
                 }
+                Action::ScrollBy(steps) => {
+                    self.scroll_to(self.view_start as i32 + steps);
+                }
+                Action::ScrollTo(line_num) => {
+                    self.scroll_to(line_num as i32);
+                }
+                Action::Resize(line_count) => {
+                    self.view_end = self.view_start + line_count as u32 - 1;
+
+                    self.should_redraw = Some(Redraw::All);
+                }
                 Action::SaveFile => {
                     self.save_file().unwrap();
+                }
+                Action::AskRedraw(redraw) => {
+                    self.should_redraw = Some(redraw);
                 }
                 Action::Quit => {
                     exit(0);
                 }
-                _ => (),
+                _ => todo!(),
             };
         });
     }
