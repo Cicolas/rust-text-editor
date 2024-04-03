@@ -1,19 +1,18 @@
 use std::env;
 
-use client::ConsoleClient;
-use editor::{Editor, EditorContent, EditorEvent};
-
-use crate::client::ClientTrait;
+use client::{console::ConsoleClient, ClientEvent};
+use editor::{vector::CharVectorEditor, Editor, EditorEvent};
 
 mod client;
 mod editor;
 mod logger;
+mod utils;
 
 fn main() {
     logger::init().unwrap();
 
-    let mut editor = Editor::new(EditorContent::<Vec<char>>::new());
-    let mut client = ConsoleClient::new(true);
+    let mut editor: CharVectorEditor = Editor::new();
+    let mut client: ConsoleClient = ConsoleClient::new(true);
 
     let mut args = env::args().skip(1);
     let path_arg = args.next();
