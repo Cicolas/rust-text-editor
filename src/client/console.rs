@@ -1,8 +1,19 @@
-use std::{cmp, io::{stdout, Stdout}};
+use std::{
+    cmp,
+    io::{stdout, Stdout},
+};
 
-use crossterm::{cursor::{self, MoveTo, SetCursorStyle}, event::{Event, KeyCode, KeyEvent, KeyEventKind}, execute, terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType}, ExecutableCommand};
+use crossterm::{
+    cursor::{self, MoveTo, SetCursorStyle},
+    event::{Event, KeyCode, KeyEvent, KeyEventKind},
+    execute,
+    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    ExecutableCommand,
+};
 
-use crate::editor::{vector::CharVectorEditor, Action, EditorContentTrait, EditorEvent, Mode, Movement, Redraw};
+use crate::editor::{
+    vector::CharVectorEditor, Action, EditorContentTrait, EditorEvent, Mode, Movement, Redraw,
+};
 
 use super::ClientEvent;
 
@@ -24,7 +35,8 @@ impl ConsoleClient {
             Redraw::All => self
                 .stdout
                 .execute(MoveTo(0, 0))?
-                .execute(Clear(ClearType::All)),
+                .execute(Clear(ClearType::All))?
+                .execute(Clear(ClearType::Purge)),
             Redraw::Line(line) => self
                 .stdout
                 .execute(MoveTo(0, line as u16))?
@@ -39,7 +51,11 @@ impl ConsoleClient {
             print!("{:>4}  ", line_num + 1);
         }
 
-        println!("{}", content);
+        if cfg!(target_os = "windows") {
+            println!("{}", content);
+        } else {
+            println!("{}\r", content);
+        }
     }
 
     fn draw_cursor(&mut self, col: u32, row: u32, mode: Mode, view_start: u32) {
@@ -56,7 +72,10 @@ impl ConsoleClient {
             self.stdout,
             cursor::Show,
             carret,
-            cursor::MoveTo((render_col + 6) as u16, render_row as u16)
+            cursor::MoveTo(
+                (render_col + if self.line_numbered { 6 } else { 0 }) as u16,
+                render_row as u16
+            )
         )
         .unwrap();
     }
@@ -112,10 +131,13 @@ impl ConsoleClient {
 }
 
 impl ClientEvent<CharVectorEditor> for ConsoleClient {
-    fn load(&mut self) {
+    fn load(&mut self, context: &mut CharVectorEditor) {
         enable_raw_mode().unwrap();
 
-        execute!(self.stdout, terminal::EnterAlternateScreen).unwrap();
+        let (_, h) = terminal::size().unwrap();
+        context.on_action(vec![Action::Resize(h - 1)]);
+
+        execute!(self.stdout, Clear(ClearType::All)).unwrap();
     }
 
     fn update(&mut self, context: &mut CharVectorEditor) -> Option<u8> {
@@ -164,10 +186,12 @@ impl ClientEvent<CharVectorEditor> for ConsoleClient {
                     line_num += 1;
                 }
             }
-            Some(Redraw::Line(line)) => {
-                let clear_row = cmp::max(0, line as i32 - context.view_start as i32);
-                self.stdout.execute(MoveTo(0, clear_row as u16)).unwrap();
-                self.draw_line(line, context.content.get_line(line).unwrap());
+            Some(Redraw::Line(line_num)) => {
+                if let Some(line) = context.content.get_line(line_num) {
+                    let clear_row = cmp::max(0, line_num as i32 - context.view_start as i32);
+                    self.stdout.execute(MoveTo(0, clear_row as u16)).unwrap();
+                    self.draw_line(line_num, line);
+                }
             }
             Some(Redraw::Range(_, _)) => todo!(),
             None => (),
