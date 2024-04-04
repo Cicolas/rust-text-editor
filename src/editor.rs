@@ -2,14 +2,13 @@ use std::{
     cmp,
     fs::File,
     io::{Read, Write},
-    process::exit,
 };
 
 use log::{error, info};
 
 pub mod vector;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Movement {
     Up,
     Down,
@@ -20,7 +19,7 @@ pub enum Movement {
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Insert,
@@ -28,6 +27,7 @@ pub enum Mode {
 }
 
 #[allow(unused)]
+#[derive(PartialEq, Eq)]
 pub enum Action {
     Move(Movement),
     ChangeMode(Mode),
@@ -49,7 +49,7 @@ pub enum Action {
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Redraw {
     All,
     Line(u32),
@@ -95,12 +95,12 @@ impl<T: EditorContentTrait> Editor<T> {
             render_col: 0,
             col: 0,
             mode: Mode::Normal,
-            should_redraw: Some(Redraw::All),
+            should_redraw: None,
             view_start: 0,
             view_end: 0,
         }
     }
-    
+
     fn move_cursor(&mut self, movement: Movement) {
         let line = self
             .content
@@ -229,8 +229,7 @@ impl<T: EditorContentTrait> EditorEvent for Editor<T> {
     fn on_load_file(&mut self, path: String) {
         info!("loading file '{}'", path);
 
-        self.open_file(path.as_str())
-            .unwrap();
+        self.open_file(path.as_str()).unwrap();
 
         self.file_path = Some(path);
     }
@@ -295,7 +294,7 @@ impl<T: EditorContentTrait> EditorEvent for Editor<T> {
                     self.should_redraw = Some(redraw);
                 }
                 Action::Quit => {
-                    exit(0);
+                    panic!("program exited!");
                 }
                 Action::None => {}
                 _ => todo!(),
