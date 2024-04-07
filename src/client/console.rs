@@ -1,10 +1,10 @@
 use std::{
     cmp,
-    io::{stdout, Stdout},
+    io::{stdout, Cursor, Stdout},
 };
 
 use crossterm::{
-    cursor::{self, MoveTo, SetCursorStyle},
+    cursor::{self, Hide, MoveTo, SetCursorStyle},
     event::{Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
@@ -32,14 +32,6 @@ impl ConsoleClient {
         Self {
             stdout: stdout(),
             line_numbered,
-        }
-    }
-
-    fn pre_draw(&mut self, should_redraw: Redraw) -> Result<&mut Stdout, std::io::Error> {
-        match should_redraw {
-            Redraw::All => self.stdout.execute(MoveTo(0, 0)),
-            Redraw::Line(line) => self.stdout.execute(MoveTo(0, line as u16)),
-            Redraw::Range(_, _) => todo!(),
         }
     }
 
@@ -175,14 +167,15 @@ impl ClientEvent<CharVectorEditor> for ConsoleClient {
             return;
         }
 
-        if let Some(redraw) = context.should_redraw {
-            self.pre_draw(redraw).unwrap();
-        }
-
         let mut line_num = context.view.top;
 
         match context.should_redraw {
             Some(Redraw::All) => {
+                self.stdout
+                    .execute(MoveTo(0, 0))
+                    .unwrap()
+                    .execute(cursor::Hide)
+                    .unwrap();
                 while let Some(line) = context.content.get_line(line_num) {
                     if line_num > context.view.bottom {
                         break;
@@ -200,6 +193,7 @@ impl ClientEvent<CharVectorEditor> for ConsoleClient {
                 if let Some(line) = context.content.get_line(line_num) {
                     let clear_row = cmp::max(0, line_num as i32 - context.view.top as i32);
                     self.stdout.execute(MoveTo(0, clear_row as u16)).unwrap();
+
                     self.draw_line(
                         line_num,
                         line.trucate_at(context.view.left as usize)
