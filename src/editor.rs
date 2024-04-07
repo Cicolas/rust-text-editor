@@ -213,16 +213,7 @@ impl<T: EditorContentTrait> Editor<T> {
 
         self.render_col = cmp::min(line_len, self.col);
 
-        if self.render_col < self.view.left {
-            self.scroll_to(self.render_col as i32, self.view.top as i32);
-            self.should_redraw = Some(Redraw::All);
-        } else if self.render_col > self.view.right {
-            self.scroll_to(
-                (self.render_col - self.view.get_width()) as i32,
-                self.view.top as i32,
-            );
-            self.should_redraw = Some(Redraw::All);
-        }
+        self.goto_cursor();
 
         self.render_row = cmp::min(cmp::max(self.view.top, self.row), self.view.bottom);
     }
@@ -252,6 +243,19 @@ impl<T: EditorContentTrait> Editor<T> {
             Some(n) => self.render_col = cmp::min(self.col, n),
             None => (),
         }
+    }
+
+    fn goto_cursor(&mut self) {
+        if self.render_col < self.view.left {
+            self.scroll_to(self.render_col as i32, self.view.top as i32);
+        } else if self.render_col > self.view.right {
+            self.scroll_to(
+                (self.render_col - self.view.get_width()) as i32,
+                self.view.top as i32,
+            );
+        }
+
+        self.should_redraw = Some(Redraw::All);
     }
 }
 
