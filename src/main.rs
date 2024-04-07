@@ -12,7 +12,7 @@ fn main() {
     logger::init().unwrap();
 
     let mut editor: CharVectorEditor = Editor::new();
-    let mut client: ConsoleClient = ConsoleClient::new(true);
+    let mut client: ConsoleClient = ConsoleClient::new(false);
 
     let mut args = env::args().skip(1);
     let path_arg = args.next();

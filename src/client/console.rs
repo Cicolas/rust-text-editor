@@ -37,18 +37,10 @@ impl ConsoleClient {
 
     fn pre_draw(&mut self, should_redraw: Redraw) -> Result<&mut Stdout, std::io::Error> {
         match should_redraw {
-            Redraw::All => self
-                .stdout
-                .execute(MoveTo(0, 0))?
-                .execute(Clear(ClearType::All))?
-                .execute(Clear(ClearType::Purge)),
-            Redraw::Line(line) => self
-                .stdout
-                .execute(MoveTo(0, line as u16))?
-                .execute(Clear(ClearType::CurrentLine)),
+            Redraw::All => self.stdout.execute(MoveTo(0, 0)),
+            Redraw::Line(line) => self.stdout.execute(MoveTo(0, line as u16)),
             Redraw::Range(_, _) => todo!(),
         }
-        // self.stdout.execute(cursor::Hide)?.execute(MoveTo(0, 0))
     }
 
     fn draw_line(&self, line_num: u32, content: String, len: u32) {
