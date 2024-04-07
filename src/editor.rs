@@ -8,6 +8,34 @@ use log::{error, info};
 
 pub mod vector;
 
+pub struct Container {
+    pub top: u32,
+    pub left: u32,
+    pub bottom: u32,
+    pub right: u32,
+}
+
+impl Default for Container {
+    fn default() -> Self {
+        Self {
+            top: 0,
+            left: 0,
+            bottom: 0,
+            right: 0,
+        }
+    }
+}
+
+impl Container {
+    pub fn get_width(&self) -> u32 {
+        self.right - self.left
+    }
+
+    pub fn get_height(&self) -> u32 {
+        self.bottom - self.top
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Movement {
     Up,
@@ -38,8 +66,8 @@ pub enum Action {
     None,
 
     ScrollBy(i32),
-    ScrollTo(u32),
-    Resize(u16),
+    // ScrollTo(u32),
+    Resize(u16, u16),
 
     OpenFile(String),
     WriteFile(String),
@@ -81,8 +109,9 @@ pub struct Editor<T: EditorContentTrait> {
     pub col: u32,
     pub mode: Mode,
     pub should_redraw: Option<Redraw>,
-    pub view_start: u32,
-    pub view_end: u32,
+    pub view: Container,
+    // pub view_start: u32,
+    // pub view_end: u32,
 }
 
 impl<T: EditorContentTrait> Editor<T> {
@@ -96,8 +125,9 @@ impl<T: EditorContentTrait> Editor<T> {
             col: 0,
             mode: Mode::Normal,
             should_redraw: None,
-            view_start: 0,
-            view_end: 0,
+            view: Container::default(),
+            // view_start: 0,
+            // view_end: 0,
         }
     }
 
@@ -114,24 +144,34 @@ impl<T: EditorContentTrait> Editor<T> {
             self.col = self.render_col;
         }
 
+        // if self.render_col != self.col {
+        //     self.row = self.render_row;
+        //     self.col = self.render_col;
+        // }
+
         match movement {
             Movement::Up => {
-                if self.render_row == self.view_start {
-                    self.scroll_to(self.view_start as i32 - 1);
+                if self.render_row == self.view.top {
+                    self.scroll_to(self.view.left as i32, self.view.top as i32 - 1);
                     self.should_redraw = Some(Redraw::All);
                 }
 
                 self.row = cmp::max(0, self.row as i32 - 1) as u32;
             }
             Movement::Down => {
-                if self.render_row == self.view_end {
-                    self.scroll_to(self.view_start as i32 + 1);
+                if self.render_row == self.view.bottom {
+                    self.scroll_to(self.view.left as i32, self.view.top as i32 + 1);
                     self.should_redraw = Some(Redraw::All);
                 }
 
                 self.row += 1;
             }
             Movement::Left => {
+                if self.render_col == self.view.left {
+                    self.scroll_to(self.view.left as i32 - 1, self.view.top as i32);
+                    self.should_redraw = Some(Redraw::All);
+                }
+
                 if self.col == 0 && self.row != 0 {
                     self.row = cmp::max(0, self.row as i32 - 1) as u32;
 
@@ -141,6 +181,11 @@ impl<T: EditorContentTrait> Editor<T> {
                 }
             }
             Movement::Right => {
+                if self.render_col == self.view.right {
+                    self.scroll_to(self.view.left as i32 + 1, self.view.top as i32);
+                    self.should_redraw = Some(Redraw::All);
+                }
+
                 self.col += 1;
 
                 // TODO: skiping single-line file
@@ -167,7 +212,19 @@ impl<T: EditorContentTrait> Editor<T> {
         }
 
         self.render_col = cmp::min(line_len, self.col);
-        self.render_row = cmp::min(cmp::max(self.view_start, self.row), self.view_end);
+
+        if self.render_col < self.view.left {
+            self.scroll_to(self.render_col as i32, self.view.top as i32);
+            self.should_redraw = Some(Redraw::All);
+        } else if self.render_col > self.view.right {
+            self.scroll_to(
+                (self.render_col - self.view.get_width()) as i32,
+                self.view.top as i32,
+            );
+            self.should_redraw = Some(Redraw::All);
+        }
+
+        self.render_row = cmp::min(cmp::max(self.view.top, self.row), self.view.bottom);
     }
 
     fn write_char(&mut self, c: char) {
@@ -178,13 +235,18 @@ impl<T: EditorContentTrait> Editor<T> {
         self.content.delete_char(self.render_col, self.row)
     }
 
-    fn scroll_to(&mut self, line_num: i32) {
-        let view_size = self.view_end - self.view_start;
+    fn scroll_to(&mut self, horizontal: i32, vertical: i32) {
+        let horizontal_size = self.view.get_width();
+        self.view.left = cmp::max(0, horizontal) as u32;
+        self.view.right = self.view.left + horizontal_size;
 
-        self.view_start = cmp::max(0, line_num) as u32;
-        self.view_end = self.view_start + view_size;
+        self.render_col = cmp::min(cmp::max(self.view.left, self.col), self.view.right);
 
-        self.render_row = cmp::min(cmp::max(self.view_start, self.row), self.view_end);
+        let vertical_size = self.view.get_height();
+        self.view.top = cmp::max(0, vertical) as u32;
+        self.view.bottom = self.view.top + vertical_size;
+
+        self.render_row = cmp::min(cmp::max(self.view.top, self.row), self.view.bottom);
 
         match self.content.get_line_len(self.render_row) {
             Some(n) => self.render_col = cmp::min(self.col, n),
@@ -277,13 +339,14 @@ impl<T: EditorContentTrait> EditorEvent for Editor<T> {
                     }
                 }
                 Action::ScrollBy(steps) => {
-                    self.scroll_to(self.view_start as i32 + steps);
+                    self.scroll_to(self.view.left as i32, self.view.top as i32 + steps);
                 }
-                Action::ScrollTo(line_num) => {
-                    self.scroll_to(line_num as i32);
-                }
-                Action::Resize(line_count) => {
-                    self.view_end = self.view_start + line_count as u32 - 1;
+                // Action::ScrollTo(line_num) => {
+                // self.scroll_to(self.view.left as i32, line_num as i32);
+                // }
+                Action::Resize(width, height) => {
+                    self.view.bottom = self.view.top + height as u32 - 1;
+                    self.view.right = self.view.left + width as u32 - 1;
 
                     self.should_redraw = Some(Redraw::All);
                 }
