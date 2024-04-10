@@ -16,7 +16,7 @@ _it probably works on older cargo versions, but I haven't tested_
 After installing rust and cargo (more on: [rust-lang](https://www.rust-lang.org/pt-BR/learn/get-started)), you need to clone this repository (you can also download via github):
 
 ```
-git clone https://github.com/Cicolas/rust-text-editor --depth=0
+git clone https://github.com/Cicolas/rust-text-editor --depth=1
 ```
 
 After downloading the source you need to open the `rust-text-editor/` folder:
