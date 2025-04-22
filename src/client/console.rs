@@ -1,46 +1,46 @@
 use std::{
-    cmp,
-    io::{stdout, Cursor, Stdout},
+    cmp, io::{stdout, Stdout}, vec
 };
 
 use crossterm::{
-    cursor::{self, Hide, MoveTo, SetCursorStyle},
+    cursor::{self, MoveTo, SetCursorStyle},
     event::{Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
-    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
-    ExecutableCommand,
+    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand,
 };
 use pad::PadStr;
 
-use crate::{
-    editor::{
-        vector::CharVectorEditor, Action, Container, EditorContentTrait, EditorEvent, Mode,
-        Movement, Redraw,
-    },
-    utils::TruncAt,
-};
+use crate::{module::{editor::Container, Module}, utils::TruncAt};
 
-use super::ClientEvent;
+use super::{Action, ClientEvent, ClientModular, DrawAction, Mode, Movement, Redraw};
 
 pub struct ConsoleClient {
     stdout: Stdout,
-    line_numbered: bool,
+    console_mode: Mode,
+    modules: Vec<Box<dyn Module>>,
 }
 
 impl ConsoleClient {
-    pub fn new(line_numbered: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             stdout: stdout(),
-            line_numbered,
+            console_mode: Mode::Normal,
+            modules: Vec::new(),
         }
     }
 
-    fn draw_line(&self, line_num: u32, content: String, len: u32) {
-        if self.line_numbered {
-            print!("{:>4}  ", line_num + 1);
-        }
-
+    fn draw_line(&self, content: String, len: u32) {
         let striped_content = content.with_exact_width(len as usize);
+
+        if cfg!(target_os = "windows") {
+            println!("{}", striped_content);
+        } else {
+            println!("{}\r", striped_content);
+        }
+    }
+
+    fn erase_line(&self, len: u32) {
+        let striped_content = "".with_exact_width(len as usize);
 
         if cfg!(target_os = "windows") {
             println!("{}", striped_content);
@@ -57,6 +57,7 @@ impl ConsoleClient {
             Mode::Normal => SetCursorStyle::SteadyBlock,
             Mode::Insert => SetCursorStyle::BlinkingBar,
             Mode::Visual => SetCursorStyle::SteadyUnderScore,
+            Mode::Command => SetCursorStyle::BlinkingBar,
         };
 
         execute!(
@@ -64,7 +65,7 @@ impl ConsoleClient {
             cursor::Show,
             carret,
             cursor::MoveTo(
-                (render_col + if self.line_numbered { 6 } else { 0 }) as u16,
+                render_col as u16,
                 render_row as u16
             )
         )
@@ -92,8 +93,9 @@ impl ConsoleClient {
                 Action::ChangeMode(Mode::Insert),
             ],
             KeyCode::Char('s') => vec![Action::SaveFile],
-            KeyCode::PageDown => vec![Action::ScrollBy(1), Action::AskRedraw(Redraw::All)],
-            KeyCode::PageUp => vec![Action::ScrollBy(-1), Action::AskRedraw(Redraw::All)],
+            KeyCode::Char(':') => vec![Action::ChangeMode(Mode::Command)],
+            KeyCode::PageDown => vec![Action::ScrollBy(1)],
+            KeyCode::PageUp => vec![Action::ScrollBy(-1)],
             KeyCode::Backspace => vec![Action::Move(Movement::Left)],
             KeyCode::Enter => vec![Action::Move(Movement::Down)],
             KeyCode::Esc => vec![Action::Quit],
@@ -119,22 +121,87 @@ impl ConsoleClient {
             _ => vec![Action::None],
         }
     }
+
+    fn command_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char(c) => vec![Action::InsertChar(c)],
+            KeyCode::Esc => vec![Action::ChangeMode(Mode::Normal)],
+            _ => vec![Action::None]
+        }
+    }
+
+    fn trigger_actions(&mut self, actions: Vec<Action>) {
+        self.modules.iter_mut().for_each(|module| {
+            let m = module.as_mut();
+
+            if let Some(post_actions) = m.on_action(&actions) {
+                post_actions.iter().for_each(|action| {
+                    match action {
+                        Action::ChangeMode(mode) => self.console_mode = *mode,
+                        _ => todo!()
+                    }
+                });
+            }
+        });
+    }
+
+    fn trigger_drawing(&mut self) {
+        let mut all_draw_actions = Vec::new();
+        
+        for module in self.modules.iter_mut() {
+            let m = module.as_mut();
+            let container = m.get_container();
+            
+            if let Some(draw_actions) = m.on_draw() {
+                for action in draw_actions {
+                    all_draw_actions.push((action, container.clone()));
+                }
+            }
+        }
+        
+        for (action, container) in all_draw_actions {
+            match action {
+                DrawAction::CursorTo(x, y) => {
+                    self.draw_cursor(x, y, self.console_mode, &container);
+                },
+                DrawAction::AskRedraw(redraw) => {
+                    match redraw {
+                        Redraw::All => {
+                            self.stdout
+                                .execute(MoveTo(0, 0))
+                                .unwrap()
+                                .execute(cursor::Hide)
+                                .unwrap();
+                            self.erase_line(container.get_width());
+                        }
+                        Redraw::Line(y, line) => {
+                            let clear_row = cmp::max(0, y as i32 - container.top as i32);
+                            self.stdout.execute(MoveTo(0, clear_row as u16)).unwrap();
+            
+                            self.draw_line(
+                                line,
+                                container.get_width(),
+                            );
+                        }
+                        Redraw::Range(_, _) => todo!(),
+                    }
+                },
+            }
+        }
+    }
 }
 
-impl ClientEvent<CharVectorEditor> for ConsoleClient {
-    fn load(&mut self, context: &mut CharVectorEditor) {
+impl ClientEvent for ConsoleClient {
+    fn load(&mut self) {
         enable_raw_mode().unwrap();
 
         let (w, h) = terminal::size().unwrap();
-        context.on_action(vec![Action::Resize(
-            if self.line_numbered { w - 6 } else { w },
-            h - 1,
-        )]);
+        self.trigger_actions(vec![Action::Resize(w / 2, h - 1)]);
 
-        execute!(self.stdout, Clear(ClearType::All)).unwrap();
+        execute!(self.stdout, EnterAlternateScreen, Clear(ClearType::All)).unwrap();
     }
 
-    fn update(&mut self, context: &mut CharVectorEditor) -> Option<u8> {
+    fn update(&mut self) -> Option<u8> {
         let event = crossterm::event::read();
 
         match event {
@@ -143,75 +210,71 @@ impl ClientEvent<CharVectorEditor> for ConsoleClient {
                     return None;
                 }
 
-                let actions = match context.mode {
+                let actions = match self.console_mode {
                     Mode::Normal => self.normal_mode_keybinding(key),
                     Mode::Insert => self.insert_mode_keybinding(key),
                     Mode::Visual => todo!(),
+                    Mode::Command => self.command_mode_keybinding(key)
                 };
 
-                context.on_action(actions);
+                match actions.first() {
+                    Some(Action::Quit) => {
+                        execute!(self.stdout, MoveTo(0, 0), Clear(ClearType::All)).unwrap();
+                        return Some(0);
+                    }
+                    Some(_) => {
+                        self.trigger_actions(actions);
+                    }
+                    None => {
+                        panic!("Invalid Action");
+                    }
+                }
+
+                // if self.console_mode == Mode::Command {
+                //     actions.iter().for_each(|action| {
+                //         match *action {
+                //             Action::InsertChar(c) => self.command_str.push(c),
+                //             Action::ChangeMode(mode) => self.console_mode = mode, 
+                //             _ => { todo!() }
+                //         }
+                //     });
+                // }
+        
             }
-            Ok(Event::Resize(w, h)) => context.on_action(vec![Action::Resize(
-                if self.line_numbered { w - 6 } else { w },
-                h - 1,
-            )]),
+            Ok(Event::Resize(w, h)) => {
+                self.trigger_actions(vec![Action::Resize(
+                    w / 2,
+                    h - 1,
+                )]);
+                // self.update_modules(vec![Action::Resize(
+                //     if self.line_numbered { w - 6 } else { w },
+                //     h - 1,
+                // )]);
+            }
             _ => (),
-        }
+        } 
 
         None
     }
 
-    fn draw(&mut self, context: &CharVectorEditor) {
-        if context.file_path.is_none() {
-            println!("no file provided!");
-            return;
-        }
+    fn draw(&mut self) {
+        self.trigger_drawing();
+    }
 
-        let mut line_num = context.view.top;
+    fn before_quit(&mut self) {
+        execute!(self.stdout, LeaveAlternateScreen).unwrap();
+    }
+    
+    fn handle_file(&mut self, path: String) {
+        self.trigger_actions(vec![Action::OpenFile(path)]);
+    }
+}
 
-        match context.should_redraw {
-            Some(Redraw::All) => {
-                self.stdout
-                    .execute(MoveTo(0, 0))
-                    .unwrap()
-                    .execute(cursor::Hide)
-                    .unwrap();
-                while let Some(line) = context.content.get_line(line_num) {
-                    if line_num > context.view.bottom {
-                        break;
-                    }
-                    self.draw_line(
-                        line_num,
-                        line.trucate_at(context.view.left as usize)
-                            .unwrap_or(String::default()),
-                        context.view.get_width(),
-                    );
-                    line_num += 1;
-                }
-            }
-            Some(Redraw::Line(line_num)) => {
-                if let Some(line) = context.content.get_line(line_num) {
-                    let clear_row = cmp::max(0, line_num as i32 - context.view.top as i32);
-                    self.stdout.execute(MoveTo(0, clear_row as u16)).unwrap();
+impl ClientModular for ConsoleClient {
+    fn attach_module(&mut self, mut module: Box<dyn Module>) {
+        module.on_load();
 
-                    self.draw_line(
-                        line_num,
-                        line.trucate_at(context.view.left as usize)
-                            .unwrap_or(String::default()),
-                        context.view.get_width(),
-                    );
-                }
-            }
-            Some(Redraw::Range(_, _)) => todo!(),
-            None => (),
-        }
-
-        self.draw_cursor(
-            context.render_col,
-            context.render_row,
-            context.mode,
-            &context.view,
-        );
+        self.modules.push(module);
     }
 }
 

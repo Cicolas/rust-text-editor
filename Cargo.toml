@@ -8,6 +8,6 @@ target = {  }
 
 [dependencies]
 ansi_term = "0.12.1"
-crossterm = "0.27.0"
+crossterm = "0.28.0"
 log = "0.4.21"
 pad = "0.1.6"

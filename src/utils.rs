@@ -3,11 +3,11 @@ pub fn is_crlf(c: char) -> bool {
 }
 
 pub trait TruncAt {
-    fn trucate_at(&self, size: usize) -> Option<String>;
+    fn truncate_at(&self, size: usize) -> Option<String>;
 }
 
 impl TruncAt for str {
-    fn trucate_at(&self, size: usize) -> Option<String> {
+    fn truncate_at(&self, size: usize) -> Option<String> {
         if size > self.len() {
             None
         } else {
