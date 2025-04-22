@@ -49,6 +49,7 @@ pub enum DrawAction {
 #[allow(unused)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Redraw {
+    Cursor,
     All,
     Line(u32, String),
     Range(u32, u32),

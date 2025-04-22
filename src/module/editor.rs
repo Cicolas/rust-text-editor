@@ -4,10 +4,10 @@ use std::{
     io::{Read, Write},
 };
 
-use log::{error, info};
+use log::{debug, error, info};
 
-use crate::utils::TruncAt;
 use crate::client::{Action, DrawAction, Mode, Movement, Redraw};
+use crate::utils::TruncAt;
 
 use super::{Module, ModuleEvent, ModuleView};
 
@@ -103,7 +103,11 @@ impl<T: EditorContentTrait> Editor<T> {
     }
 
     fn get_offset(&self) -> u32 {
-        if self.line_numbered { 6 } else { 0 }
+        if self.line_numbered {
+            6
+        } else {
+            0
+        }
     }
 
     fn move_cursor(&mut self, movement: Movement) {
@@ -113,6 +117,7 @@ impl<T: EditorContentTrait> Editor<T> {
             .unwrap_or(String::from("\n"));
         let mut line_len = line.len() as u32;
         let mut wrap_left = false;
+        self.should_redraw = Some(Redraw::Cursor);
 
         if self.render_row != self.row {
             self.row = self.render_row;
@@ -219,11 +224,14 @@ impl<T: EditorContentTrait> Editor<T> {
     fn goto_cursor(&mut self) {
         if self.render_col < self.view.left {
             self.scroll_to(self.render_col as i32, self.view.top as i32);
+            self.should_redraw = Some(Redraw::All);
         } else if self.render_col + self.get_offset() > self.view.right {
-            self.scroll_to(((self.render_col + self.get_offset()) - self.view.get_width()) as i32, self.view.top as i32);
+            self.scroll_to(
+                ((self.render_col + self.get_offset()) - self.view.get_width()) as i32,
+                self.view.top as i32,
+            );
+            self.should_redraw = Some(Redraw::All);
         }
-
-        self.should_redraw = Some(Redraw::All);
     }
 
     // fn draw_line(&self, line_num: u32, content: String, len: u32) {
@@ -289,30 +297,39 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                     } else {
                         self.file_path = Some(path.clone());
                         info!("'{}' loaded!\r", path);
+                        self.should_redraw = Some(Redraw::All);
                     }
                 }
                 Action::Move(mov) => {
                     self.move_cursor(*mov);
                 }
                 Action::InsertChar(c) => {
+                    self.write_char(*c);
+                    self.move_cursor(Movement::Right);
+
                     if (*c) == '\n' {
                         self.should_redraw = Some(Redraw::All);
                     } else {
-                        // self.should_redraw = Some(Redraw::Line("self.row".into()));
+                        let modified_line = self.content.get_line(self.render_row);
+                        if let Some(line) = modified_line {
+                            self.should_redraw = Some(Redraw::Line(self.render_row, line));
+                        }
                     }
-
-                    self.write_char(*c);
-                    self.move_cursor(Movement::Right);
                 }
                 Action::Backspace => {
-                    if self.render_col == 0 {
-                        self.should_redraw = Some(Redraw::All);
-                    } else {
-                        // self.should_redraw = Some(Redraw::Line("".into()));
-                    }
-
                     self.move_cursor(Movement::Left);
-                    self.delete_char();
+                    let deleted_char = self.delete_char();
+                    match deleted_char {
+                        Some('\n') => {
+                            self.should_redraw = Some(Redraw::All);
+                        }
+                        _ => {
+                            let modified_line = self.content.get_line(self.render_row);
+                            if let Some(line) = modified_line {
+                                self.should_redraw = Some(Redraw::Line(self.render_row, line));
+                            }
+                        }
+                    }
                 }
                 Action::Delete => {
                     let deleted_char = self.delete_char();
@@ -321,7 +338,10 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                             self.should_redraw = Some(Redraw::All);
                         }
                         _ => {
-                            // self.should_redraw = Some(Redraw::Line("self.row".into()));
+                            let modified_line = self.content.get_line(self.render_row);
+                            if let Some(line) = modified_line {
+                                self.should_redraw = Some(Redraw::Line(self.render_row, line));
+                            }
                         }
                     }
                 }
@@ -335,12 +355,14 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                     self.view.bottom = self.view.top + (*height) as u32 - 1;
                     self.view.right = self.view.left + (*width) as u32 - 1;
 
-                    info!("{}, {}\r", *width, *height);
-
                     self.should_redraw = Some(Redraw::All);
                 }
                 Action::SaveFile => {
                     self.save_file().unwrap();
+                }
+                Action::ChangeMode(mode) => {
+                    self.should_redraw = Some(Redraw::Cursor);
+                    return_vec.push(Action::ChangeMode(mode.clone()));
                 }
                 Action::None => {}
                 a => {
@@ -363,19 +385,59 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
         }
 
         let mut drawing_actions = vec![];
-        let mut line_num = self.view.top;
 
-        while let Some(line) = self.content.get_line(line_num) {
-            let mut actual_string = String::new();
-            if line_num > self.view.bottom {
-                break;
+        match &self.should_redraw {
+            Some(Redraw::All) => {
+                debug!("all");
+                let mut line_num = self.view.top;
+
+                while let Some(line) = self.content.get_line(line_num) {
+                    let mut actual_string = String::new();
+                    if line_num > self.view.bottom {
+                        break;
+                    }
+                    if self.line_numbered {
+                        actual_string.push_str(format!("{:>4}  ", line_num + 1).as_str());
+                    }
+                    actual_string.push_str(
+                        line.truncate_at((self.view.left) as usize)
+                            .unwrap_or(String::new())
+                            .as_str(),
+                    );
+                    drawing_actions.push(DrawAction::AskRedraw(Redraw::Line(
+                        line_num - self.view.top,
+                        actual_string,
+                    )));
+                    line_num += 1;
+                }
             }
-            if self.line_numbered {
-                actual_string.push_str(format!("{:>4}  ", line_num + 1).as_str());
+            Some(Redraw::Line(y, str)) => {
+                debug!("line");
+                let mut actual_string = String::new();
+                let line_num = y;
+
+                if self.line_numbered {
+                    actual_string.push_str(format!("{:>4}  ", y + 1).as_str());
+                }
+                actual_string.push_str(
+                    str.truncate_at((self.view.left) as usize)
+                        .unwrap_or(String::new())
+                        .as_str(),
+                );
+
+                drawing_actions.push(DrawAction::AskRedraw(Redraw::Line(
+                    line_num - self.view.top,
+                    actual_string,
+                )));
             }
-            actual_string.push_str(line.truncate_at((self.view.left) as usize).unwrap_or(String::new()).as_str());
-            drawing_actions.push(DrawAction::AskRedraw(Redraw::Line(line_num, actual_string)));
-            line_num += 1;
+            Some(Redraw::Cursor) => {
+                debug!("cursor");
+            }
+            Some(Redraw::Range(_, _)) => todo!(),
+            None => {
+                debug!("none");
+                return None;
+            }
         }
 
         if self.line_numbered {

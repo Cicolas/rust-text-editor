@@ -1,6 +1,7 @@
 use std::env;
 
 use client::{console::ConsoleClient, ClientEvent, ClientModular};
+use log::info;
 use module::editor::{vector::CharVectorEditor, Editor};
 
 mod client;
@@ -24,6 +25,8 @@ fn main() {
         client.handle_file(path);
     }
 
+    let mut i = 0;
+
     loop {
         client.draw();
 
@@ -31,5 +34,6 @@ fn main() {
             client.before_quit();
             break;
         }
+        info!("{}", {i += 1; i});
     }
 }

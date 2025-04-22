@@ -1,5 +1,9 @@
+use std::io::stdout;
+
 use ansi_term::Color::*;
+use crossterm::{cursor, execute, terminal};
 use log::{Level, SetLoggerError};
+use pad::PadStr;
 
 struct Logger;
 
@@ -18,13 +22,17 @@ impl log::Log for Logger {
         };
 
         if self.enabled(record.metadata()) {
-            println!(
+            let (w, h) = terminal::size().unwrap();
+
+            execute!(stdout(), cursor::MoveTo(0, h - 2)).unwrap();
+            print!("{}", format!(
                 "{}:{}: {} - {}",
                 record.file().unwrap_or("unknown"),
                 record.line().unwrap_or(0),
                 level_colored,
                 record.args()
-            );
+            ).pad(w.into(), ' ', pad::Alignment::Left, true));
+            execute!(stdout(), cursor::MoveTo(0, 0)).unwrap();
         }
     }
 

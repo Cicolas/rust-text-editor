@@ -1,5 +1,5 @@
 use std::{
-    cmp, io::{stdout, Stdout}, vec
+    io::{stdout, Stdout}, vec
 };
 
 use crossterm::{
@@ -10,7 +10,7 @@ use crossterm::{
 };
 use pad::PadStr;
 
-use crate::{module::{editor::Container, Module}, utils::TruncAt};
+use crate::module::{editor::Container, Module};
 
 use super::{Action, ClientEvent, ClientModular, DrawAction, Mode, Movement, Redraw};
 
@@ -49,16 +49,20 @@ impl ConsoleClient {
         }
     }
 
-    fn draw_cursor(&mut self, col: u32, row: u32, mode: Mode, view: &Container) {
-        let render_col = col - view.left;
-        let render_row = row - view.top;
-
-        let carret = match mode {
+    fn get_cursor_style(&self, mode: Mode) -> SetCursorStyle {
+        return match mode {
             Mode::Normal => SetCursorStyle::SteadyBlock,
             Mode::Insert => SetCursorStyle::BlinkingBar,
             Mode::Visual => SetCursorStyle::SteadyUnderScore,
             Mode::Command => SetCursorStyle::BlinkingBar,
-        };
+        }
+    }
+
+    fn draw_cursor(&mut self, col: u32, row: u32, mode: Mode, view: &Container) {
+        let render_col = col - view.left;
+        let render_row = row - view.top;
+
+        let carret = self.get_cursor_style(mode);
 
         execute!(
             self.stdout,
@@ -131,18 +135,34 @@ impl ConsoleClient {
     }
 
     fn trigger_actions(&mut self, actions: Vec<Action>) {
-        self.modules.iter_mut().for_each(|module| {
-            let m = module.as_mut();
+        let mut all_post_actions = Vec::new();
 
+        for module in self.modules.iter_mut() {
+            let m = module.as_mut();
+            
             if let Some(post_actions) = m.on_action(&actions) {
-                post_actions.iter().for_each(|action| {
-                    match action {
-                        Action::ChangeMode(mode) => self.console_mode = *mode,
-                        _ => todo!()
-                    }
-                });
+                for action in post_actions {
+                    all_post_actions.push(action);
+                }
             }
-        });
+        }
+
+        for action in all_post_actions {
+            match action {
+                Action::ChangeMode(mode) => {
+                    let carret = self.get_cursor_style(mode);
+
+                    execute!(
+                        self.stdout,
+                        // cursor::Show,
+                        carret,
+                    ).unwrap();
+                    
+                    self.console_mode = mode;
+                },
+                _ => todo!()
+            }
+        }
     }
 
     fn trigger_drawing(&mut self) {
@@ -172,11 +192,14 @@ impl ConsoleClient {
                                 .unwrap()
                                 .execute(cursor::Hide)
                                 .unwrap();
-                            self.erase_line(container.get_width());
+
+                            for line_num in 0..container.get_height() {
+                                self.stdout.execute(MoveTo(0, line_num as u16)).unwrap();
+                                self.erase_line(container.get_width());
+                            }
                         }
                         Redraw::Line(y, line) => {
-                            let clear_row = cmp::max(0, y as i32 - container.top as i32);
-                            self.stdout.execute(MoveTo(0, clear_row as u16)).unwrap();
+                            self.stdout.execute(MoveTo(0, y as u16)).unwrap();
             
                             self.draw_line(
                                 line,
@@ -184,6 +207,7 @@ impl ConsoleClient {
                             );
                         }
                         Redraw::Range(_, _) => todo!(),
+                        Redraw::Cursor => { todo!() }
                     }
                 },
             }
@@ -196,7 +220,7 @@ impl ClientEvent for ConsoleClient {
         enable_raw_mode().unwrap();
 
         let (w, h) = terminal::size().unwrap();
-        self.trigger_actions(vec![Action::Resize(w / 2, h - 1)]);
+        self.trigger_actions(vec![Action::Resize(w, h - 2)]);
 
         execute!(self.stdout, EnterAlternateScreen, Clear(ClearType::All)).unwrap();
     }
@@ -243,8 +267,8 @@ impl ClientEvent for ConsoleClient {
             }
             Ok(Event::Resize(w, h)) => {
                 self.trigger_actions(vec![Action::Resize(
-                    w / 2,
-                    h - 1,
+                    w,
+                    h - 2,
                 )]);
                 // self.update_modules(vec![Action::Resize(
                 //     if self.line_numbered { w - 6 } else { w },
