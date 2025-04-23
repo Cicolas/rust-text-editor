@@ -1,5 +1,5 @@
 use std::{
-    io::{stdout, Stdout}, vec
+    cell::{Ref, RefCell}, io::{stdout, Stdout}, ops::Index, vec
 };
 
 use crossterm::{
@@ -18,6 +18,7 @@ pub struct ConsoleClient {
     stdout: Stdout,
     console_mode: Mode,
     modules: Vec<Box<dyn Module>>,
+    focus_idx: Option<u32>,
 }
 
 impl ConsoleClient {
@@ -26,6 +27,7 @@ impl ConsoleClient {
             stdout: stdout(),
             console_mode: Mode::Normal,
             modules: Vec::new(),
+            focus_idx: None
         }
     }
 
@@ -130,24 +132,34 @@ impl ConsoleClient {
         match key.code {
             KeyCode::Char(c) => vec![Action::InsertChar(c)],
             KeyCode::Esc => vec![Action::ChangeMode(Mode::Normal)],
+            KeyCode::Backspace => vec![Action::Backspace],
+            KeyCode::Delete => vec![Action::Delete],
+            KeyCode::Left => vec![Action::Move(Movement::Left)],
+            KeyCode::Right => vec![Action::Move(Movement::Right)],
+            KeyCode::Enter => vec![Action::InsertChar('\n')],
             _ => vec![Action::None]
         }
     }
 
     fn trigger_actions(&mut self, actions: Vec<Action>) {
+        if self.focus_idx.is_none() {
+            return;
+        }
+
+        let idx = self.focus_idx.unwrap() as usize;
+        let mut module = self.modules.get_mut(idx);
         let mut all_post_actions = Vec::new();
 
-        for module in self.modules.iter_mut() {
-            let m = module.as_mut();
-            
+        if let Some(m) = module.as_mut() {
             if let Some(post_actions) = m.on_action(&actions) {
                 for action in post_actions {
                     all_post_actions.push(action);
                 }
             }
         }
-
+        
         for action in all_post_actions {
+            // TODO: abstract to function
             match action {
                 Action::ChangeMode(mode) => {
                     let carret = self.get_cursor_style(mode);
@@ -246,6 +258,9 @@ impl ClientEvent for ConsoleClient {
                         execute!(self.stdout, MoveTo(0, 0), Clear(ClearType::All)).unwrap();
                         return Some(0);
                     }
+                    Some(Action::ChangeMode(Mode::Command)) => {
+                        self.console_mode = Mode::Command;
+                    },
                     Some(_) => {
                         self.trigger_actions(actions);
                     }
@@ -299,6 +314,11 @@ impl ClientModular for ConsoleClient {
         module.on_load();
 
         self.modules.push(module);
+        self.focus_idx = Some((self.modules.len() - 1) as u32);
+    }
+    
+    fn change_focus(&mut self, idx: u32) {
+        self.focus_idx = Some(idx);
     }
 }
 

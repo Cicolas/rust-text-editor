@@ -2,7 +2,7 @@ use std::env;
 
 use client::{console::ConsoleClient, ClientEvent, ClientModular};
 use log::info;
-use module::editor::{vector::CharVectorEditor, Editor};
+use module::{command::CommandModule, editor::{vector::CharVectorEditor, Editor}};
 
 mod client;
 mod logger;
@@ -13,12 +13,14 @@ fn main() {
     logger::init().unwrap();
 
     let editor: CharVectorEditor = Editor::new();
+    let command = CommandModule::new();
     let mut client = ConsoleClient::new();
 
     let mut args = env::args().skip(1);
     let path_arg = args.next();
 
-    client.attach_module(Box::new(editor));
+    // client.attach_module(Box::new(editor));
+    client.attach_module(Box::new(command));
     client.load();
     
     if let Some(path) = path_arg {
@@ -34,6 +36,6 @@ fn main() {
             client.before_quit();
             break;
         }
-        info!("{}", {i += 1; i});
+        // info!("{}", {i += 1; i});
     }
 }

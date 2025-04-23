@@ -233,20 +233,6 @@ impl<T: EditorContentTrait> Editor<T> {
             self.should_redraw = Some(Redraw::All);
         }
     }
-
-    // fn draw_line(&self, line_num: u32, content: String, len: u32) {
-    //     if self.line_numbered {
-    //         print!("{:>4}  ", line_num + 1);
-    //     }
-
-    //     let striped_content = content.with_exact_width(len as usize);
-
-    //     if cfg!(target_os = "windows") {
-    //         println!("{}", striped_content);
-    //     } else {
-    //         println!("{}\r", striped_content);
-    //     }
-    // }
 }
 
 impl<T: EditorContentTrait> EditorIO for Editor<T> {
@@ -287,7 +273,7 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
 
         let mut return_vec = Vec::<Action>::new();
 
-        actions.iter().for_each(|action| {
+        for action in actions.iter() {
             match action {
                 Action::OpenFile(path) => {
                     info!("loading file '{}'\r", path);
@@ -364,13 +350,9 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                     self.should_redraw = Some(Redraw::Cursor);
                     return_vec.push(Action::ChangeMode(mode.clone()));
                 }
-                Action::None => {}
-                a => {
-                    let post_action = a.clone();
-                    return_vec.push(post_action);
-                }
+                _ => {}
             };
-        });
+        }
 
         if return_vec.is_empty() {
             None

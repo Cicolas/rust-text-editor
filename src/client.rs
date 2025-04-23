@@ -36,6 +36,9 @@ pub enum Action {
     // ScrollTo(u32),
     Resize(u16, u16),
 
+    FocusMe,
+    UnfocusMe,
+
     OpenFile(String),
     WriteFile(String),
     SaveFile,
@@ -66,4 +69,5 @@ pub trait ClientEvent {
 
 pub trait ClientModular {
     fn attach_module(&mut self, module: Box<dyn Module>);
+    fn change_focus(&mut self, idx: u32);
 }
