@@ -2,9 +2,9 @@ use std::cmp;
 
 use log::debug;
 
-use crate::client::{Action, DrawAction, Mode, Movement, Redraw};
+use crate::client::{Action, Container, DrawAction, Mode, Movement, Redraw};
 
-use super::{editor::Container, Module, ModuleEvent, ModuleView};
+use super::{Module, ModuleEvent, ModuleView};
 
 pub struct CommandModule {
     pub width: u32,
@@ -76,8 +76,8 @@ impl ModuleEvent for CommandModule {
                         self.render_col = cmp::min(self.command_str.len() as u32, self.render_col) as u32;
                     }
                 },
-                Action::Resize(w, _) => {
-                    self.width = *w as u32;
+                Action::Resize(_, right, _, left) => {
+                    self.width = (*right - *left) as u32;
                 }
                 _ => {}
             }

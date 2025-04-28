@@ -10,15 +10,17 @@ use crossterm::{
 };
 use pad::PadStr;
 
-use crate::module::{editor::Container, Module};
 
-use super::{Action, ClientEvent, ClientModular, DrawAction, Mode, Movement, Redraw};
+use crate::module::Module;
+
+use super::{Action, ClientEvent, ClientModular, Container, ContainerLayout, DrawAction, Mode, Movement, Redraw};
 
 pub struct ConsoleClient {
     stdout: Stdout,
     console_mode: Mode,
     modules: Vec<Box<dyn Module>>,
     focus_idx: Option<u32>,
+    containers: ContainerLayout,
 }
 
 impl ConsoleClient {
@@ -27,7 +29,8 @@ impl ConsoleClient {
             stdout: stdout(),
             console_mode: Mode::Normal,
             modules: Vec::new(),
-            focus_idx: None
+            focus_idx: None,
+            containers: ContainerLayout::new(),
         }
     }
 
@@ -232,7 +235,12 @@ impl ClientEvent for ConsoleClient {
         enable_raw_mode().unwrap();
 
         let (w, h) = terminal::size().unwrap();
-        self.trigger_actions(vec![Action::Resize(w, h - 2)]);
+        self.trigger_actions(vec![Action::Resize(
+            0,
+            w, 
+            h - 2,
+            0
+        )]);
 
         execute!(self.stdout, EnterAlternateScreen, Clear(ClearType::All)).unwrap();
     }
@@ -267,28 +275,15 @@ impl ClientEvent for ConsoleClient {
                     None => {
                         panic!("Invalid Action");
                     }
-                }
-
-                // if self.console_mode == Mode::Command {
-                //     actions.iter().for_each(|action| {
-                //         match *action {
-                //             Action::InsertChar(c) => self.command_str.push(c),
-                //             Action::ChangeMode(mode) => self.console_mode = mode, 
-                //             _ => { todo!() }
-                //         }
-                //     });
-                // }
-        
+                }        
             }
             Ok(Event::Resize(w, h)) => {
                 self.trigger_actions(vec![Action::Resize(
+                    0,
                     w,
                     h - 2,
+                    0
                 )]);
-                // self.update_modules(vec![Action::Resize(
-                //     if self.line_numbered { w - 6 } else { w },
-                //     h - 1,
-                // )]);
             }
             _ => (),
         } 
@@ -311,8 +306,9 @@ impl ClientEvent for ConsoleClient {
 
 impl ClientModular for ConsoleClient {
     fn attach_module(&mut self, mut module: Box<dyn Module>) {
+        // self.containers.push_container(vec![]);
+        
         module.on_load();
-
         self.modules.push(module);
         self.focus_idx = Some((self.modules.len() - 1) as u32);
     }

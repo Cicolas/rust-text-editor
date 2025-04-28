@@ -1,6 +1,4 @@
-use editor::Container;
-
-use crate::client::{Action, DrawAction};
+use crate::client::{Action, Container, DrawAction};
 
 pub mod command;
 pub mod editor;

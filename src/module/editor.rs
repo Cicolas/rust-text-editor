@@ -6,41 +6,12 @@ use std::{
 
 use log::{debug, error, info};
 
-use crate::client::{Action, DrawAction, Mode, Movement, Redraw};
+use crate::client::{Action, Container, DrawAction, Movement, Redraw};
 use crate::utils::TruncAt;
 
 use super::{Module, ModuleEvent, ModuleView};
 
 pub mod vector;
-
-#[derive(Debug, Clone)]
-pub struct Container {
-    pub top: u32,
-    pub left: u32,
-    pub bottom: u32,
-    pub right: u32,
-}
-
-impl Default for Container {
-    fn default() -> Self {
-        Self {
-            top: 0,
-            left: 0,
-            bottom: 0,
-            right: 0,
-        }
-    }
-}
-
-impl Container {
-    pub fn get_width(&self) -> u32 {
-        self.right - self.left
-    }
-
-    pub fn get_height(&self) -> u32 {
-        self.bottom - self.top
-    }
-}
 
 pub trait EditorIO {
     fn open_file(&mut self, path: &str) -> Result<(), std::io::Error>;
@@ -65,9 +36,9 @@ pub struct Editor<T: EditorContentTrait> {
     pub row: u32,
     pub render_col: u32,
     pub col: u32,
-    pub mode: Mode,
     pub should_redraw: Option<Redraw>,
     pub view: Container,
+    pub container: Container,
     pub line_numbered: bool,
     // pub view_start: u32,
     // pub view_end: u32,
@@ -93,9 +64,9 @@ impl<T: EditorContentTrait> Editor<T> {
             row: 0,
             render_col: 0,
             col: 0,
-            mode: Mode::Normal,
             should_redraw: None,
             view: Container::default(),
+            container: Container::default(),
             line_numbered: true,
             // view_start: 0,
             // view_end: 0,
@@ -337,9 +308,22 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                 // Action::ScrollTo(line_num) => {
                 // self.scroll_to(self.view.left as i32, line_num as i32);
                 // }
-                Action::Resize(width, height) => {
-                    self.view.bottom = self.view.top + (*height) as u32 - 1;
-                    self.view.right = self.view.left + (*width) as u32 - 1;
+                Action::Resize(top, right, bottom, left) => {
+                    let width = *right - *left;
+                    let height = *bottom - *top;
+                    
+                    self.container = Container{
+                        top: *top as u32,
+                        left: *left as u32,
+                        bottom: *bottom as u32,
+                        right: *right as u32,
+                    };
+
+                    // self.container.bottom = self.container.top + (*height) as u32 - 1;
+                    // self.container.right = self.container.left + (*width) as u32 - 1;
+
+                    self.view.bottom = self.view.top + height as u32 - 1;
+                    self.view.right = self.view.left + width as u32 - 1;
 
                     self.should_redraw = Some(Redraw::All);
                 }
