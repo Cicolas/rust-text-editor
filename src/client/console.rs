@@ -8,12 +8,15 @@ use crossterm::{
     execute,
     terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand,
 };
+use log::{info, trace, warn};
 use pad::PadStr;
 
 
-use crate::module::Module;
+use crate::module::{self, Module};
 
-use super::{Action, ClientEvent, ClientModular, Container, ContainerLayout, DrawAction, Mode, Movement, Redraw};
+use super::{Action, ClientEvent, ClientModular, Container, ContainerAutoFlow, ContainerLayout, DrawAction, Mode, Movement, Redraw};
+
+const BSP_EXPOENT: u16 = 3;
 
 pub struct ConsoleClient {
     stdout: Stdout,
@@ -64,8 +67,8 @@ impl ConsoleClient {
     }
 
     fn draw_cursor(&mut self, col: u32, row: u32, mode: Mode, view: &Container) {
-        let render_col = col - view.left;
-        let render_row = row - view.top;
+        let render_col = col + view.left;
+        let render_row = row + view.top;
 
         let carret = self.get_cursor_style(mode);
 
@@ -146,6 +149,7 @@ impl ConsoleClient {
 
     fn trigger_actions(&mut self, actions: Vec<Action>) {
         if self.focus_idx.is_none() {
+            warn!("Any module on focus");
             return;
         }
 
@@ -183,9 +187,9 @@ impl ConsoleClient {
     fn trigger_drawing(&mut self) {
         let mut all_draw_actions = Vec::new();
         
-        for module in self.modules.iter_mut() {
-            let m = module.as_mut();
-            let container = m.get_container();
+        for idx in 0..self.modules.len() {
+            let m = self.modules[idx].as_mut();
+            let container = self.containers.get_module(idx).unwrap();
             
             if let Some(draw_actions) = m.on_draw() {
                 for action in draw_actions {
@@ -209,12 +213,12 @@ impl ConsoleClient {
                                 .unwrap();
 
                             for line_num in 0..container.get_height() {
-                                self.stdout.execute(MoveTo(0, line_num as u16)).unwrap();
+                                self.stdout.execute(MoveTo(0, (line_num + container.top) as u16)).unwrap();
                                 self.erase_line(container.get_width());
                             }
                         }
                         Redraw::Line(y, line) => {
-                            self.stdout.execute(MoveTo(0, y as u16)).unwrap();
+                            self.stdout.execute(MoveTo(0, (y + container.top) as u16)).unwrap();
             
                             self.draw_line(
                                 line,
@@ -235,12 +239,7 @@ impl ClientEvent for ConsoleClient {
         enable_raw_mode().unwrap();
 
         let (w, h) = terminal::size().unwrap();
-        self.trigger_actions(vec![Action::Resize(
-            0,
-            w, 
-            h - 2,
-            0
-        )]);
+        self.containers.setup_bsp(BSP_EXPOENT, w as u32, h as u32);
 
         execute!(self.stdout, EnterAlternateScreen, Clear(ClearType::All)).unwrap();
     }
@@ -306,11 +305,23 @@ impl ClientEvent for ConsoleClient {
 
 impl ClientModular for ConsoleClient {
     fn attach_module(&mut self, mut module: Box<dyn Module>) {
-        // self.containers.push_container(vec![]);
-        
+        let module_idx = self.modules.len(); 
+        let n_container = self.containers.push_module(
+            module_idx, 
+            vec![]
+        ).unwrap();
+
         module.on_load();
         self.modules.push(module);
-        self.focus_idx = Some((self.modules.len() - 1) as u32);
+        self.focus_idx = Some(module_idx as u32);
+
+        // TODO: resize all modules
+        self.trigger_actions(vec![Action::Resize(
+            n_container.top as u16, 
+            n_container.right as u16, 
+            n_container.bottom as u16, 
+            n_container.left as u16
+        )]);
     }
     
     fn change_focus(&mut self, idx: u32) {

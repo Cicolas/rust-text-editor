@@ -1,6 +1,8 @@
 use core::panic;
 use std::{collections::VecDeque, fmt::Error, os::unix::process::parent_id};
 
+use log::warn;
+
 use crate::module::Module;
 
 pub mod console;
@@ -138,6 +140,10 @@ pub trait ContainerAutoFlow {
         constraints: Vec<Constraint>,
     ) -> Result<Container, Error>;
     fn remove_module(&mut self, module_id: usize) -> Result<(), Error>;
+    fn get_module(
+        &self,
+        module_id: usize
+    ) -> Result<Container, Error>;
 }
 
 impl ContainerAutoFlow for ContainerLayout {
@@ -304,12 +310,30 @@ impl ContainerAutoFlow for ContainerLayout {
                     have_changes = true;
                     break;
                 } else if !right_exists && !left_exists {
-                    panic!("unknonw state");
+                    self.layout_tree[idx].has_child = false;
+                    warn!("unknonw state");
                 }
             }
         }
 
         Ok(())
+    }
+    
+    fn get_module(
+        &self,
+        module_id: usize
+    ) -> Result<Container, Error> {
+        self.layout_tree
+            .iter()
+            .find(|elem| {
+                if let Some(e) = elem.module_id   {
+                    e == module_id
+                } else {
+                    false
+                }
+            })
+            .and_then(|elem| { Some(elem.container) })
+            .ok_or(Error)
     }
 }
 
