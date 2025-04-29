@@ -132,7 +132,12 @@ impl ContainerLayout {
 
 pub trait ContainerAutoFlow {
     fn setup_bsp(&mut self, expoent: u16, screen_w: u32, screen_h: u32);
-    fn push_module(&mut self, module_id: usize, constraints: Vec<Constraint>) -> Result<(), Error>;
+    fn push_module(
+        &mut self,
+        module_id: usize,
+        constraints: Vec<Constraint>,
+    ) -> Result<Container, Error>;
+    fn remove_module(&mut self, module_id: usize) -> Result<(), Error>;
 }
 
 impl ContainerAutoFlow for ContainerLayout {
@@ -198,36 +203,39 @@ impl ContainerAutoFlow for ContainerLayout {
         }
     }
 
-    fn push_module(&mut self, module_id: usize, _constraints: Vec<Constraint>) -> Result<(), Error> {
+    fn push_module(
+        &mut self,
+        module_id: usize,
+        _constraints: Vec<Constraint>,
+    ) -> Result<Container, Error> {
         let mut container_queue = VecDeque::<usize>::new();
         container_queue.push_back(0);
-        
+
         while let Some(layout_idx) = container_queue.pop_front() {
             if !self.layout_tree[layout_idx].has_child {
                 self.layout_tree[layout_idx].module_id = Some(module_id);
                 self.layout_tree[layout_idx].has_child = true;
-                break;
+                return Ok(self.layout_tree[layout_idx].container);
             }
-            
-            if let Some(module) = self.layout_tree[layout_idx].module_id {
+
+            if let Some(actual_module) = self.layout_tree[layout_idx].module_id {
                 let right_idx = self.layout_tree[layout_idx].right;
                 let left_idx = self.layout_tree[layout_idx].left;
+
+                if let Some(l_idx) = left_idx {
+                    self.layout_tree[l_idx].module_id = Some(actual_module);
+                    self.layout_tree[l_idx].has_child = true;
+                    self.layout_tree[layout_idx].module_id = None;
+                }
 
                 if let Some(r_idx) = right_idx {
                     self.layout_tree[r_idx].module_id = Some(module_id);
                     self.layout_tree[r_idx].has_child = true;
-                } else {
-                    return Err(Error);
+                    self.layout_tree[layout_idx].module_id = None;
+
+                    return Ok(self.layout_tree[layout_idx].container);
                 }
 
-                if let Some(l_idx) = left_idx {
-                    self.layout_tree[l_idx].module_id = Some(module);
-                    self.layout_tree[l_idx].has_child = true;
-                } else {
-                    return Err(Error);
-                }
-
-                self.layout_tree[layout_idx].module_id = None;
                 break;
             }
 
@@ -237,6 +245,67 @@ impl ContainerAutoFlow for ContainerLayout {
 
             if let Some(right) = self.layout_tree[layout_idx].right {
                 container_queue.push_back(right);
+            }
+        }
+
+        Err(Error)
+    }
+
+    fn remove_module(&mut self, module_id: usize) -> Result<(), Error> {
+        let layout_node = self
+            .layout_tree
+            .iter_mut()
+            .filter(|elem| {
+                if let Some(module) = elem.module_id {
+                    module == module_id
+                } else {
+                    false
+                }
+            })
+            .next()
+            .ok_or(Error)?;
+
+        layout_node.module_id = None;
+        layout_node.has_child = false;
+
+        let mut have_changes = true;
+
+        while have_changes {
+            have_changes = false;
+            for idx in (0..self.layout_tree.len()).rev() {
+                let node = &self.layout_tree[idx];
+
+                if !node.has_child
+                || node.left.is_none()
+                || node.right.is_none()
+                || node.module_id.is_some()
+                {
+                    continue;
+                }
+                
+                let left_idx = node.left.unwrap();
+                let left_exists = self.layout_tree[left_idx].has_child.clone();
+
+                let right_idx = node.right.unwrap();
+                let right_exists = self.layout_tree[right_idx].has_child.clone();
+
+                if !right_exists && left_exists {
+                    // push left_module
+                    self.layout_tree[idx].module_id = self.layout_tree[left_idx].module_id;
+                    self.layout_tree[left_idx].module_id = None;
+                    self.layout_tree[left_idx].has_child = false;
+                    have_changes = true;
+                    break;
+                } else if right_exists && !left_exists {
+                    // push right_module
+                    self.layout_tree[idx].module_id = self.layout_tree[right_idx].module_id;
+                    self.layout_tree[right_idx].module_id = None;
+                    self.layout_tree[right_idx].has_child = false;
+                    have_changes = true;
+                    break;
+                } else if !right_exists && !left_exists {
+                    panic!("unknonw state");
+                }
             }
         }
 

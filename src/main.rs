@@ -20,6 +20,9 @@ fn main() {
     bsp.push_module(2, vec![]).unwrap();
     bsp.push_module(3, vec![]).unwrap();
 
+    bsp.remove_module(2);
+
+
     let mut i = 0;
     for LayoutNode {container, left, right, module_id, has_child } in bsp.layout_tree {
         println!("{} = {:?} ({:?}) -> {:?}, {:?}", i, container, module_id, left, right);
