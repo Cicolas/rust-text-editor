@@ -38,7 +38,6 @@ pub struct Editor<T: EditorContentTrait> {
     pub col: u32,
     pub should_redraw: Option<Redraw>,
     pub view: Container,
-    pub container: Container,
     pub line_numbered: bool,
     // pub view_start: u32,
     // pub view_end: u32,
@@ -66,7 +65,6 @@ impl<T: EditorContentTrait> Editor<T> {
             col: 0,
             should_redraw: None,
             view: Container::default(),
-            container: Container::default(),
             line_numbered: true,
             // view_start: 0,
             // view_end: 0,
@@ -110,7 +108,8 @@ impl<T: EditorContentTrait> Editor<T> {
                     self.should_redraw = Some(Redraw::All);
                 }
 
-                self.row += 1;
+                debug!("{:?}", self.view);
+                self.row = cmp::min(self.view.bottom, self.row + 1) as u32;
             }
             Movement::Left => {
                 if self.render_col == self.view.left {
@@ -311,13 +310,6 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                 Action::Resize(top, right, bottom, left) => {
                     let width = *right - *left;
                     let height = *bottom - *top;
-                    
-                    self.container = Container{
-                        top: *top as u32,
-                        left: *left as u32,
-                        bottom: *bottom as u32,
-                        right: *right as u32,
-                    };
 
                     // self.container.bottom = self.container.top + (*height) as u32 - 1;
                     // self.container.right = self.container.left + (*width) as u32 - 1;
@@ -397,7 +389,7 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                 )));
             }
             Some(Redraw::Cursor) => {
-                debug!("cursor");
+                // debug!("cursor");
             }
             Some(Redraw::Range(_, _)) => todo!(),
             None => {
@@ -407,9 +399,9 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
         }
 
         if self.line_numbered {
-            drawing_actions.push(DrawAction::CursorTo(self.render_col + 6, self.render_row));
+            drawing_actions.push(DrawAction::CursorTo(self.render_col + 6, self.render_row - self.view.top));
         } else {
-            drawing_actions.push(DrawAction::CursorTo(self.render_col, self.render_row));
+            drawing_actions.push(DrawAction::CursorTo(self.render_col, self.render_row - self.view.top));
         }
 
         Some(drawing_actions)
