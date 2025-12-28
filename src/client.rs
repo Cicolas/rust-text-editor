@@ -1,6 +1,7 @@
 use core::panic;
 use std::{collections::VecDeque, fmt::Error, os::unix::process::parent_id};
 
+use crossterm::cursor::SetCursorStyle;
 use log::warn;
 
 use crate::module::Module;
@@ -41,16 +42,12 @@ pub enum Action {
     // ScrollTo(u32),
     Resize(u16, u16, u16, u16),
 
-    FocusMe,
-    UnfocusMe,
-
-    OpenFile(String),
     WriteFile(String),
     SaveFile,
 }
 
 pub enum DrawAction {
-    CursorTo(u32, u32),
+    CursorTo(u32, u32, SetCursorStyle),
     AskRedraw(Redraw),
 }
 

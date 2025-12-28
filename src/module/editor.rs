@@ -1,13 +1,20 @@
 use std::{
     cmp,
     fs::File,
-    io::{Read, Write},
+    io::{Read, Write}, path::{Path, PathBuf},
 };
 
-use crossterm::style::Stylize;
+use crossterm::{
+    cursor::SetCursorStyle,
+    event::{KeyCode, KeyEvent},
+    style::Stylize,
+};
 use log::{debug, error, info};
 
-use crate::client::{Action, Container, DrawAction, Movement, Redraw};
+use crate::client::{
+    console::{IncomingConsoleEvent, OutcomingConsoleEvent},
+    Action, Container, DrawAction, Mode, Movement, Redraw,
+};
 use crate::utils::TruncAt;
 
 use super::{Module, ModuleEvent, ModuleView};
@@ -15,9 +22,9 @@ use super::{Module, ModuleEvent, ModuleView};
 pub mod vector;
 
 pub trait EditorIO {
-    fn open_file(&mut self, path: &str) -> Result<(), std::io::Error>;
+    fn open_file(&mut self, path: &Path) -> Result<(), std::io::Error>;
     fn save_file(&self) -> Result<(), std::io::Error>;
-    fn write_file(&self, path: &str) -> Result<(), std::io::Error>;
+    fn write_file(&self, path: &Path) -> Result<(), std::io::Error>;
 }
 
 // pub trait EditorEvent {
@@ -31,7 +38,7 @@ pub struct EditorContent<T> {
 }
 
 pub struct Editor<T: EditorContentTrait> {
-    pub file_path: Option<String>,
+    pub file_path: Option<PathBuf>,
     pub content: T,
     pub render_row: u32,
     pub row: u32,
@@ -40,6 +47,8 @@ pub struct Editor<T: EditorContentTrait> {
     pub should_redraw: Option<Redraw>,
     pub view: Container,
     pub line_numbered: bool,
+
+    mode: Mode,
     // pub view_start: u32,
     // pub view_end: u32,
 }
@@ -67,8 +76,110 @@ impl<T: EditorContentTrait> Editor<T> {
             should_redraw: None,
             view: Container::default(),
             line_numbered: true,
-            // view_start: 0,
-            // view_end: 0,
+            mode: Mode::Normal, // view_start: 0,
+                                // view_end: 0,
+        }
+    }
+
+    fn convert_key_to_actions(&mut self, key: KeyEvent) -> Vec<Action> {
+        match self.mode {
+            Mode::Normal => normal_mode_keybinding(key),
+            Mode::Insert => insert_mode_keybinding(key),
+            _ => todo!(),
+        }
+    }
+
+    fn trigger_actions(&mut self, actions: &Vec<Action>) -> Option<Vec<OutcomingConsoleEvent>> {
+        self.should_redraw = None;
+
+        let return_vec = Vec::<OutcomingConsoleEvent>::new();
+
+        for action in actions.iter() {
+            match action {
+                Action::Move(mov) => {
+                    self.move_cursor(*mov);
+                }
+                Action::InsertChar(c) => {
+                    self.write_char(*c);
+                    self.move_cursor(Movement::Right);
+
+                    if (*c) == '\n' {
+                        self.should_redraw = Some(Redraw::All);
+                    } else {
+                        let modified_line = self.content.get_line(self.render_row);
+                        if let Some(line) = modified_line {
+                            self.should_redraw = Some(Redraw::Line(self.render_row, line));
+                        }
+                    }
+                }
+                Action::Backspace => {
+                    if self.render_col == 0 && self.render_row == 0 {
+                        self.should_redraw = Some(Redraw::Cursor);
+                        continue;
+                    }
+
+                    self.move_cursor(Movement::Left);
+                    let deleted_char = self.delete_char();
+                    debug!("{:?}", deleted_char);
+                    match deleted_char {
+                        Some('\n') => {
+                            self.should_redraw = Some(Redraw::All);
+                        }
+                        _ => {
+                            let modified_line = self.content.get_line(self.render_row);
+                            if let Some(line) = modified_line {
+                                self.should_redraw = Some(Redraw::Line(self.render_row, line));
+                            }
+                        }
+                    }
+                }
+                Action::Delete => {
+                    let deleted_char = self.delete_char();
+                    match deleted_char {
+                        Some('\n') => {
+                            self.should_redraw = Some(Redraw::All);
+                        }
+                        _ => {
+                            let modified_line = self.content.get_line(self.render_row);
+                            if let Some(line) = modified_line {
+                                self.should_redraw = Some(Redraw::Line(self.render_row, line));
+                            }
+                        }
+                    }
+                }
+                Action::ScrollBy(steps) => {
+                    self.scroll_to(self.view.left as i32, self.view.top as i32 + steps);
+                }
+                // Action::ScrollTo(line_num) => {
+                // self.scroll_to(self.view.left as i32, line_num as i32);
+                // }
+                Action::Resize(top, right, bottom, left) => {
+                    let width = *right - *left;
+                    let height = *bottom - *top;
+
+                    // self.container.bottom = self.container.top + (*height) as u32 - 1;
+                    // self.container.right = self.container.left + (*width) as u32 - 1;
+
+                    self.view.bottom = self.view.top + height as u32 - 1;
+                    self.view.right = self.view.left + width as u32 - 1;
+
+                    self.should_redraw = Some(Redraw::All);
+                }
+                Action::SaveFile => {
+                    self.save_file().unwrap();
+                }
+                Action::ChangeMode(mode) => {
+                    self.should_redraw = Some(Redraw::Cursor);
+                    self.mode = mode.clone();
+                }
+                _ => self.should_redraw = Some(Redraw::Cursor),
+            };
+        }
+
+        if return_vec.is_empty() {
+            None
+        } else {
+            Some(return_vec)
         }
     }
 
@@ -122,7 +233,7 @@ impl<T: EditorContentTrait> Editor<T> {
                     self.row = cmp::max(0, self.row as i32 - 1) as u32;
 
                     wrap_left = true;
-                    
+
                     if self.render_row == self.view.top {
                         self.scroll_to(self.view.left as i32, self.view.top as i32 - 1);
                         self.should_redraw = Some(Redraw::All);
@@ -217,8 +328,8 @@ impl<T: EditorContentTrait> Editor<T> {
 }
 
 impl<T: EditorContentTrait> EditorIO for Editor<T> {
-    fn open_file(&mut self, path: &str) -> Result<(), std::io::Error> {
-        self.file_path = Some(path.to_string());
+    fn open_file(&mut self, path: &Path) -> Result<(), std::io::Error> {
+        self.file_path = Some(path.to_path_buf());
         let mut file = File::open(path)?;
         let mut buf: Vec<u8> = Vec::new();
         file.read_to_end(&mut buf)?;
@@ -239,7 +350,7 @@ impl<T: EditorContentTrait> EditorIO for Editor<T> {
         Ok(())
     }
 
-    fn write_file(&self, path: &str) -> Result<(), std::io::Error> {
+    fn write_file(&self, path: &Path) -> Result<(), std::io::Error> {
         let mut file = File::create(path)?;
         let mut buf: Vec<u8> = Vec::new();
         self.content.read_data(&mut buf);
@@ -249,108 +360,17 @@ impl<T: EditorContentTrait> EditorIO for Editor<T> {
 }
 
 impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
-    fn on_action(&mut self, actions: &Vec<Action>) -> Option<Vec<Action>> {
-        self.should_redraw = None;
-
-        let mut return_vec = Vec::<Action>::new();
-
-        for action in actions.iter() {
-            match action {
-                Action::OpenFile(path) => {
-                    info!("loading file '{}'\r", path);
-
-                    if let Err(error) = self.open_file(path.as_str()) {
-                        error!("error while loading '{}': {}", path, error);
-                    } else {
-                        self.file_path = Some(path.clone());
-                        info!("'{}' loaded!\r", path);
-                        self.should_redraw = Some(Redraw::All);
-                    }
-                }
-                Action::Move(mov) => {
-                    self.move_cursor(*mov);
-                }
-                Action::InsertChar(c) => {
-                    self.write_char(*c);
-                    self.move_cursor(Movement::Right);
-
-                    if (*c) == '\n' {
-                        self.should_redraw = Some(Redraw::All);
-                    } else {
-                        let modified_line = self.content.get_line(self.render_row);
-                        if let Some(line) = modified_line {
-                            self.should_redraw = Some(Redraw::Line(self.render_row, line));
-                        }
-                    }
-                }
-                Action::Backspace => {
-                    if self.render_col == 0 && self.render_row == 0 {
-                        self.should_redraw = Some(Redraw::Cursor);
-                        continue;
-                    }
-                 
-                    self.move_cursor(Movement::Left);
-                    let deleted_char = self.delete_char();
-                    debug!("{:?}", deleted_char);
-                    match deleted_char {
-                        Some('\n') => {
-                            self.should_redraw = Some(Redraw::All);
-                        }
-                        _ => {
-                            let modified_line = self.content.get_line(self.render_row);
-                            if let Some(line) = modified_line {
-                                self.should_redraw = Some(Redraw::Line(self.render_row, line));
-                            }
-                        }
-                    }
-                }
-                Action::Delete => {
-                    let deleted_char = self.delete_char();
-                    match deleted_char {
-                        Some('\n') => {
-                            self.should_redraw = Some(Redraw::All);
-                        }
-                        _ => {
-                            let modified_line = self.content.get_line(self.render_row);
-                            if let Some(line) = modified_line {
-                                self.should_redraw = Some(Redraw::Line(self.render_row, line));
-                            }
-                        }
-                    }
-                }
-                Action::ScrollBy(steps) => {
-                    self.scroll_to(self.view.left as i32, self.view.top as i32 + steps);
-                }
-                // Action::ScrollTo(line_num) => {
-                // self.scroll_to(self.view.left as i32, line_num as i32);
-                // }
-                Action::Resize(top, right, bottom, left) => {
-                    let width = *right - *left;
-                    let height = *bottom - *top;
-
-                    // self.container.bottom = self.container.top + (*height) as u32 - 1;
-                    // self.container.right = self.container.left + (*width) as u32 - 1;
-
-                    self.view.bottom = self.view.top + height as u32 - 1;
-                    self.view.right = self.view.left + width as u32 - 1;
-
-                    self.should_redraw = Some(Redraw::All);
-                }
-                Action::SaveFile => {
-                    self.save_file().unwrap();
-                }
-                Action::ChangeMode(mode) => {
-                    self.should_redraw = Some(Redraw::Cursor);
-                    return_vec.push(Action::ChangeMode(mode.clone()));
-                }
-                _ => {}
-            };
-        }
-
-        if return_vec.is_empty() {
-            None
-        } else {
-            Some(return_vec)
+    fn on_event(&mut self, event: IncomingConsoleEvent) -> Option<Vec<OutcomingConsoleEvent>> {
+        match event {
+            IncomingConsoleEvent::Key(key_event) => {
+                let actions = self.convert_key_to_actions(key_event);
+                self.trigger_actions(&actions)
+            }
+            IncomingConsoleEvent::File(file_path) => {
+                let _ = self.open_file(&file_path);
+                None
+            }
+            _ => None,
         }
     }
 
@@ -433,11 +453,13 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
             drawing_actions.push(DrawAction::CursorTo(
                 self.render_col + 6,
                 self.render_row - self.view.top,
+                get_cursor_style(self.mode),
             ));
         } else {
             drawing_actions.push(DrawAction::CursorTo(
                 self.render_col,
                 self.render_row - self.view.top,
+                get_cursor_style(self.mode),
             ));
         }
 
@@ -452,3 +474,62 @@ impl<T: EditorContentTrait> ModuleView for Editor<T> {
 }
 
 impl<T: EditorContentTrait> Module for Editor<T> {}
+
+fn normal_mode_keybinding(key: KeyEvent) -> Vec<Action> {
+    match key.code {
+        KeyCode::Char('k') => vec![Action::Move(Movement::Up)],
+        KeyCode::Char('j') => vec![Action::Move(Movement::Down)],
+        KeyCode::Char('h') => vec![Action::Move(Movement::Left)],
+        KeyCode::Char('l') => vec![Action::Move(Movement::Right)],
+        KeyCode::Char('q') => vec![Action::Quit],
+        KeyCode::Char('i') => vec![Action::ChangeMode(Mode::Insert)],
+        KeyCode::Char('I') => vec![
+            Action::Move(Movement::LineStart),
+            Action::ChangeMode(Mode::Insert),
+        ],
+        KeyCode::Char('a') => vec![
+            Action::Move(Movement::Right),
+            Action::ChangeMode(Mode::Insert),
+        ],
+        KeyCode::Char('A') => vec![
+            Action::Move(Movement::LineEnd),
+            Action::ChangeMode(Mode::Insert),
+        ],
+        KeyCode::Char('s') => vec![Action::SaveFile],
+        KeyCode::Char(':') => vec![Action::ChangeMode(Mode::Command)],
+        KeyCode::PageDown => vec![Action::ScrollBy(1)],
+        KeyCode::PageUp => vec![Action::ScrollBy(-1)],
+        KeyCode::Backspace => vec![Action::Move(Movement::Left)],
+        KeyCode::Enter => vec![Action::Move(Movement::Down)],
+        KeyCode::Esc => vec![Action::Quit],
+        KeyCode::Up => vec![Action::Move(Movement::Up)],
+        KeyCode::Down => vec![Action::Move(Movement::Down)],
+        KeyCode::Left => vec![Action::Move(Movement::Left)],
+        KeyCode::Right => vec![Action::Move(Movement::Right)],
+        _ => vec![Action::None],
+    }
+}
+
+fn insert_mode_keybinding(key: KeyEvent) -> Vec<Action> {
+    match key.code {
+        KeyCode::Char(c) => vec![Action::InsertChar(c)],
+        KeyCode::Backspace => vec![Action::Backspace],
+        KeyCode::Delete => vec![Action::Delete],
+        KeyCode::Up => vec![Action::Move(Movement::Up)],
+        KeyCode::Down => vec![Action::Move(Movement::Down)],
+        KeyCode::Left => vec![Action::Move(Movement::Left)],
+        KeyCode::Right => vec![Action::Move(Movement::Right)],
+        KeyCode::Esc => vec![Action::ChangeMode(Mode::Normal)],
+        KeyCode::Enter => vec![Action::InsertChar('\n')],
+        _ => vec![Action::None],
+    }
+}
+
+fn get_cursor_style(mode: Mode) -> SetCursorStyle {
+    return match mode {
+        Mode::Normal => SetCursorStyle::SteadyBlock,
+        Mode::Insert => SetCursorStyle::BlinkingBar,
+        Mode::Visual => SetCursorStyle::SteadyUnderScore,
+        Mode::Command => SetCursorStyle::BlinkingBar,
+    };
+}

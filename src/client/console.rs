@@ -1,8 +1,5 @@
 use std::{
-    cell::{Ref, RefCell},
-    io::{stdout, Stdout},
-    ops::Index,
-    vec,
+    cell::{Ref, RefCell}, io::{Stdout, stdout}, ops::Index, path::PathBuf, vec
 };
 
 use crossterm::{
@@ -27,9 +24,22 @@ use super::{
 
 const BSP_EXPOENT: u16 = 3;
 
+pub enum IncomingConsoleEvent {
+    Key(KeyEvent),
+    Resize(u16, u16),
+    File(PathBuf)
+}
+
+pub enum OutcomingConsoleEvent {
+    FocusMe,
+    UnfocusMe,
+    Quit,
+    Message(String, String), // (module, message)
+    None
+}
+
 pub struct ConsoleClient {
     stdout: Stdout,
-    console_mode: Mode,
     modules: Vec<Box<dyn Module>>,
     focus_idx: Option<u32>,
     containers: ContainerLayout,
@@ -39,7 +49,6 @@ impl ConsoleClient {
     pub fn new() -> Self {
         Self {
             stdout: stdout(),
-            console_mode: Mode::Normal,
             modules: Vec::new(),
             focus_idx: None,
             containers: ContainerLayout::new(),
@@ -66,20 +75,11 @@ impl ConsoleClient {
         }
     }
 
-    fn get_cursor_style(&self, mode: Mode) -> SetCursorStyle {
-        return match mode {
-            Mode::Normal => SetCursorStyle::SteadyBlock,
-            Mode::Insert => SetCursorStyle::BlinkingBar,
-            Mode::Visual => SetCursorStyle::SteadyUnderScore,
-            Mode::Command => SetCursorStyle::BlinkingBar,
-        };
-    }
-
-    fn draw_cursor(&mut self, col: u32, row: u32, mode: Mode, view: &Container) {
+    fn draw_cursor(&mut self, col: u32, row: u32, cursor_style: SetCursorStyle, view: &Container) {
         let render_col = col + view.left;
         let render_row = row + view.top;
 
-        let carret = self.get_cursor_style(mode);
+        let carret = cursor_style;
 
         execute!(
             self.stdout,
@@ -90,73 +90,11 @@ impl ConsoleClient {
         .unwrap();
     }
 
-    fn normal_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
-        match key.code {
-            KeyCode::Char('k') => vec![Action::Move(Movement::Up)],
-            KeyCode::Char('j') => vec![Action::Move(Movement::Down)],
-            KeyCode::Char('h') => vec![Action::Move(Movement::Left)],
-            KeyCode::Char('l') => vec![Action::Move(Movement::Right)],
-            KeyCode::Char('q') => vec![Action::Quit],
-            KeyCode::Char('i') => vec![Action::ChangeMode(Mode::Insert)],
-            KeyCode::Char('I') => vec![
-                Action::Move(Movement::LineStart),
-                Action::ChangeMode(Mode::Insert),
-            ],
-            KeyCode::Char('a') => vec![
-                Action::Move(Movement::Right),
-                Action::ChangeMode(Mode::Insert),
-            ],
-            KeyCode::Char('A') => vec![
-                Action::Move(Movement::LineEnd),
-                Action::ChangeMode(Mode::Insert),
-            ],
-            KeyCode::Char('s') => vec![Action::SaveFile],
-            KeyCode::Char(':') => vec![Action::ChangeMode(Mode::Command)],
-            KeyCode::PageDown => vec![Action::ScrollBy(1)],
-            KeyCode::PageUp => vec![Action::ScrollBy(-1)],
-            KeyCode::Backspace => vec![Action::Move(Movement::Left)],
-            KeyCode::Enter => vec![Action::Move(Movement::Down)],
-            KeyCode::Esc => vec![Action::Quit],
-            KeyCode::Up => vec![Action::Move(Movement::Up)],
-            KeyCode::Down => vec![Action::Move(Movement::Down)],
-            KeyCode::Left => vec![Action::Move(Movement::Left)],
-            KeyCode::Right => vec![Action::Move(Movement::Right)],
-            _ => vec![Action::None],
-        }
-    }
 
-    fn insert_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
-        match key.code {
-            KeyCode::Char(c) => vec![Action::InsertChar(c)],
-            KeyCode::Backspace => vec![Action::Backspace],
-            KeyCode::Delete => vec![Action::Delete],
-            KeyCode::Up => vec![Action::Move(Movement::Up)],
-            KeyCode::Down => vec![Action::Move(Movement::Down)],
-            KeyCode::Left => vec![Action::Move(Movement::Left)],
-            KeyCode::Right => vec![Action::Move(Movement::Right)],
-            KeyCode::Esc => vec![Action::ChangeMode(Mode::Normal)],
-            KeyCode::Enter => vec![Action::InsertChar('\n')],
-            _ => vec![Action::None],
-        }
-    }
-
-    fn command_mode_keybinding(&self, key: KeyEvent) -> Vec<Action> {
-        match key.code {
-            KeyCode::Char(c) => vec![Action::InsertChar(c)],
-            KeyCode::Esc => vec![Action::ChangeMode(Mode::Normal)],
-            KeyCode::Backspace => vec![Action::Backspace],
-            KeyCode::Delete => vec![Action::Delete],
-            KeyCode::Left => vec![Action::Move(Movement::Left)],
-            KeyCode::Right => vec![Action::Move(Movement::Right)],
-            KeyCode::Enter => vec![Action::InsertChar('\n')],
-            _ => vec![Action::None],
-        }
-    }
-
-    fn trigger_actions(&mut self, actions: Vec<Action>) {
+    fn trigger_events(&mut self, event: IncomingConsoleEvent) -> Vec<OutcomingConsoleEvent> {
         if self.focus_idx.is_none() {
             warn!("Any module on focus");
-            return;
+            return vec![OutcomingConsoleEvent::None];
         }
 
         let idx = self.focus_idx.unwrap() as usize;
@@ -164,31 +102,14 @@ impl ConsoleClient {
         let mut all_post_actions = Vec::new();
 
         if let Some(m) = module.as_mut() {
-            if let Some(post_actions) = m.on_action(&actions) {
+            if let Some(post_actions) = m.on_event(event) {
                 for action in post_actions {
                     all_post_actions.push(action);
                 }
             }
         }
 
-        for action in all_post_actions {
-            // TODO: abstract to function
-            match action {
-                Action::ChangeMode(mode) => {
-                    let carret = self.get_cursor_style(mode);
-
-                    execute!(
-                        self.stdout,
-                        // cursor::Show,
-                        carret,
-                    )
-                    .unwrap();
-
-                    self.console_mode = mode;
-                }
-                _ => todo!(),
-            }
-        }
+        all_post_actions
     }
 
     fn trigger_drawing(&mut self) {
@@ -207,8 +128,8 @@ impl ConsoleClient {
 
         for (action, container) in all_draw_actions {
             match action {
-                DrawAction::CursorTo(x, y) => {
-                    self.draw_cursor(x, y, self.console_mode, &container);
+                DrawAction::CursorTo(x, y, cursor_style) => {
+                    self.draw_cursor(x, y, cursor_style, &container);
                 }
                 DrawAction::AskRedraw(redraw) => match redraw {
                     Redraw::All => {
@@ -250,12 +171,25 @@ impl ConsoleClient {
         for idx in 0..self.modules.len() {
             let container = self.containers.get_module(idx).unwrap();
 
-            self.trigger_actions(vec![Action::Resize(
-                container.top as u16,
-                container.right as u16,
-                container.bottom as u16,
-                container.left as u16,
-            )]);
+            // self.trigger_events(vec![Action::Resize(
+            //     container.top as u16,
+            //     container.right as u16,
+            //     container.bottom as u16,
+            //     container.left as u16,
+            // )]);
+        }
+    }
+
+    fn handle_outcoming_events(&mut self, events: Vec<OutcomingConsoleEvent>) {
+        for event in events {
+            match event {
+                OutcomingConsoleEvent::Quit => {
+                    execute!(self.stdout, MoveTo(0, 0), Clear(ClearType::All)).unwrap();
+                    self.before_quit();
+                    std::process::exit(0);
+                }
+                _ => (),
+            }
         }
     }
 }
@@ -280,28 +214,10 @@ impl ClientEvent for ConsoleClient {
                     return None;
                 }
 
-                let actions = match self.console_mode {
-                    Mode::Normal => self.normal_mode_keybinding(key),
-                    Mode::Insert => self.insert_mode_keybinding(key),
-                    Mode::Visual => todo!(),
-                    Mode::Command => self.command_mode_keybinding(key),
-                };
+                // TODO: handle outcoming events
+                let outcoming_events = self.trigger_events(IncomingConsoleEvent::Key(key));
 
-                match actions.first() {
-                    Some(Action::Quit) => {
-                        execute!(self.stdout, MoveTo(0, 0), Clear(ClearType::All)).unwrap();
-                        return Some(0);
-                    }
-                    Some(Action::ChangeMode(Mode::Command)) => {
-                        self.console_mode = Mode::Command;
-                    }
-                    Some(_) => {
-                        self.trigger_actions(actions);
-                    }
-                    None => {
-                        panic!("Invalid Action");
-                    }
-                }
+                self.handle_outcoming_events(outcoming_events);
             }
             Ok(Event::Resize(w, h)) => {
                 self.trigger_resize();
@@ -317,11 +233,12 @@ impl ClientEvent for ConsoleClient {
     }
 
     fn before_quit(&mut self) {
+        disable_raw_mode().unwrap();
         execute!(self.stdout, LeaveAlternateScreen).unwrap();
     }
 
     fn handle_file(&mut self, path: String) {
-        self.trigger_actions(vec![Action::OpenFile(path)]);
+        self.trigger_events(IncomingConsoleEvent::File(PathBuf::from(path)));
     }
 }
 

@@ -1,8 +1,9 @@
 use std::cmp;
 
+use crossterm::{cursor::SetCursorStyle, event::{KeyCode, KeyEvent}};
 use log::debug;
 
-use crate::client::{Action, Container, DrawAction, Mode, Movement, Redraw};
+use crate::client::{Action, Container, DrawAction, Mode, Movement, Redraw, console::{IncomingConsoleEvent, OutcomingConsoleEvent}};
 
 use super::{Module, ModuleEvent, ModuleView};
 
@@ -20,12 +21,21 @@ impl CommandModule {
             command_str: String::new(),
         }
     }
-}
 
-impl ModuleEvent for CommandModule {
-    fn on_action(&mut self, actions: &Vec<Action>) -> Option<Vec<Action>> {
-        let mut return_vec = Vec::<Action>::new();
+    fn convert_key_to_actions(&mut self, key: KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char(c) => vec![Action::InsertChar(c)],
+            KeyCode::Esc => vec![Action::ChangeMode(Mode::Normal)],
+            KeyCode::Backspace => vec![Action::Backspace],
+            KeyCode::Delete => vec![Action::Delete],
+            KeyCode::Left => vec![Action::Move(Movement::Left)],
+            KeyCode::Right => vec![Action::Move(Movement::Right)],
+            KeyCode::Enter => vec![Action::InsertChar('\n')],
+            _ => vec![Action::None],
+        }
+    }
 
+    fn trigger_actions(&mut self, actions: &Vec<Action>) -> Option<Vec<OutcomingConsoleEvent>> {
         for action in actions.into_iter() {
             match action {
                 Action::Move(movement) => {
@@ -41,18 +51,8 @@ impl ModuleEvent for CommandModule {
                         _ => {}
                     }
                 },
-                Action::ChangeMode(mode) => {
-                    match mode {
-                        Mode::Normal => {
-                            self.command_str = String::new();
-                            return_vec.push(Action::ChangeMode(Mode::Normal));
-                        },
-                        _ => {}
-                    }
-                },
                 Action::InsertChar('\n') => {
-                    self.command_str = String::new();
-                    self.render_col = 0;
+                    return Some(self.process_command());
                 },
                 Action::InsertChar(c) => {
                     self.render_col += 1;
@@ -82,7 +82,34 @@ impl ModuleEvent for CommandModule {
             }
         }
 
-        Some(return_vec)
+        None
+    }
+
+    fn process_command(&mut self) -> Vec<OutcomingConsoleEvent> {
+        debug!("Processing command: {}", self.command_str);
+
+        let command = self.command_str.clone();
+        self.command_str.clear();
+        self.render_col = 0;
+
+        match command.as_str() {
+            "q" | "quit" => {
+                vec![OutcomingConsoleEvent::Quit]
+            }
+            _ => panic!("Command unknown")
+        }
+    }
+}
+
+impl ModuleEvent for CommandModule {
+    fn on_event(&mut self, event: IncomingConsoleEvent) -> Option<Vec<OutcomingConsoleEvent>> {
+        match event {
+            IncomingConsoleEvent::Key(key) => {
+                let actions = self.convert_key_to_actions(key);
+                self.trigger_actions(&actions)
+            },
+            _ => None,
+        }
     }
 
     fn on_draw(&self) -> Option<Vec<crate::client::DrawAction>> {
@@ -93,7 +120,7 @@ impl ModuleEvent for CommandModule {
             DrawAction::AskRedraw(
                 Redraw::Line(0, str)
             ),
-            DrawAction::CursorTo(self.render_col + 1 as u32, 0),
+            DrawAction::CursorTo(self.render_col + 1 as u32, 0, SetCursorStyle::BlinkingBlock),
         ])
     }
 }

@@ -35,8 +35,8 @@ fn main() {
     let path_arg = args.next();
 
     client.load();
-    client.attach_module(Box::new(editor));
-    // client.attach_module(Box::new(command));
+    // client.attach_module(Box::new(editor));
+    client.attach_module(Box::new(command));
     
     if let Some(path) = path_arg {
         client.handle_file(path);
