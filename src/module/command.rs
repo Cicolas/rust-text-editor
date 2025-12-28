@@ -51,7 +51,6 @@ impl ModuleEvent for CommandModule {
                     }
                 },
                 Action::InsertChar('\n') => {
-                    debug!("{}", self.command_str);
                     self.command_str = String::new();
                     self.render_col = 0;
                 },

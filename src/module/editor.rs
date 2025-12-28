@@ -4,6 +4,7 @@ use std::{
     io::{Read, Write},
 };
 
+use crossterm::style::Stylize;
 use log::{debug, error, info};
 
 use crate::client::{Action, Container, DrawAction, Movement, Redraw};
@@ -275,6 +276,7 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                 Action::Backspace => {
                     self.move_cursor(Movement::Left);
                     let deleted_char = self.delete_char();
+                    debug!("{:?}", deleted_char);
                     match deleted_char {
                         Some('\n') => {
                             self.should_redraw = Some(Redraw::All);
@@ -346,7 +348,7 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
 
         match &self.should_redraw {
             Some(Redraw::All) => {
-                debug!("all");
+                debug!("Redraw: all");
                 let mut line_num = self.view.top;
 
                 while let Some(line) = self.content.get_line(line_num) {
@@ -354,6 +356,7 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                     if line_num > self.view.bottom {
                         break;
                     }
+
                     if self.line_numbered {
                         actual_string.push_str(format!("{:>4}  ", line_num + 1).as_str());
                     }
@@ -368,9 +371,22 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                     )));
                     line_num += 1;
                 }
+
+                // Redraw rest of the screen
+                for i in line_num..self.view.bottom + 1 {
+                    let mut actual_string = String::new();
+                    if self.line_numbered {
+                        actual_string
+                            .push_str(format!("{:>4}  ", i + 1).dark_grey().to_string().as_str());
+                    }
+                    drawing_actions.push(DrawAction::AskRedraw(Redraw::Line(
+                        i - self.view.top,
+                        actual_string,
+                    )));
+                }
             }
             Some(Redraw::Line(y, str)) => {
-                debug!("line");
+                debug!("Redraw: line");
                 let mut actual_string = String::new();
                 let line_num = y;
 
@@ -389,19 +405,25 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                 )));
             }
             Some(Redraw::Cursor) => {
-                // debug!("cursor");
+                // debug!("Redraw: cursor");
             }
             Some(Redraw::Range(_, _)) => todo!(),
             None => {
-                debug!("none");
+                debug!("Redraw: none");
                 return None;
             }
         }
 
         if self.line_numbered {
-            drawing_actions.push(DrawAction::CursorTo(self.render_col + 6, self.render_row - self.view.top));
+            drawing_actions.push(DrawAction::CursorTo(
+                self.render_col + 6,
+                self.render_row - self.view.top,
+            ));
         } else {
-            drawing_actions.push(DrawAction::CursorTo(self.render_col, self.render_row - self.view.top));
+            drawing_actions.push(DrawAction::CursorTo(
+                self.render_col,
+                self.render_row - self.view.top,
+            ));
         }
 
         Some(drawing_actions)
