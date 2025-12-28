@@ -284,6 +284,11 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
                     }
                 }
                 Action::Backspace => {
+                    if self.render_col == 0 && self.render_row == 0 {
+                        self.should_redraw = Some(Redraw::Cursor);
+                        continue;
+                    }
+                 
                     self.move_cursor(Movement::Left);
                     let deleted_char = self.delete_char();
                     debug!("{:?}", deleted_char);
