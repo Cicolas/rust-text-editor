@@ -336,7 +336,7 @@ impl ContainerAutoFlow for ContainerLayout {
 
 pub trait ClientEvent {
     fn load(&mut self);
-    fn update(&mut self) -> Option<u8>;
+    fn update(&mut self);
     fn draw(&mut self);
     fn before_quit(&mut self);
 

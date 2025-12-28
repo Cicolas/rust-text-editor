@@ -1,12 +1,15 @@
 use std::env;
 
 use client::{console::ConsoleClient, ClientEvent, ClientModular};
-use module::{command::CommandModule, editor::{vector::CharVectorEditor, Editor}};
+use module::{
+    command::CommandModule,
+    editor::{vector::CharVectorEditor, Editor},
+};
 
 mod client;
 mod logger;
-mod utils;
 mod module;
+mod utils;
 
 fn main() {
     logger::init().unwrap();
@@ -25,7 +28,7 @@ fn main() {
     //     println!("{} = {:?} ({:?}) -> {:?}, {:?}", i, container, module_id, left, right);
     //     i += 1;
     // }
-    
+
     // return;
     let editor: CharVectorEditor = Editor::new();
     let command = CommandModule::new();
@@ -35,19 +38,15 @@ fn main() {
     let path_arg = args.next();
 
     client.load();
-    // client.attach_module(Box::new(editor));
     client.attach_module(Box::new(command));
-    
+    client.attach_module(Box::new(editor));
+
     if let Some(path) = path_arg {
         client.handle_file(path);
     }
 
     loop {
         client.draw();
-
-        if let Some(_) = client.update() {
-            client.before_quit();
-            break;
-        }
+        client.update();
     }
 }

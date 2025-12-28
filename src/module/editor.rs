@@ -92,7 +92,7 @@ impl<T: EditorContentTrait> Editor<T> {
     fn trigger_actions(&mut self, actions: &Vec<Action>) -> Option<Vec<OutcomingConsoleEvent>> {
         self.should_redraw = None;
 
-        let return_vec = Vec::<OutcomingConsoleEvent>::new();
+        let mut return_vec = Vec::<OutcomingConsoleEvent>::new();
 
         for action in actions.iter() {
             match action {
@@ -157,9 +157,6 @@ impl<T: EditorContentTrait> Editor<T> {
                     let width = *right - *left;
                     let height = *bottom - *top;
 
-                    // self.container.bottom = self.container.top + (*height) as u32 - 1;
-                    // self.container.right = self.container.left + (*width) as u32 - 1;
-
                     self.view.bottom = self.view.top + height as u32 - 1;
                     self.view.right = self.view.left + width as u32 - 1;
 
@@ -171,6 +168,12 @@ impl<T: EditorContentTrait> Editor<T> {
                 Action::ChangeMode(mode) => {
                     self.should_redraw = Some(Redraw::Cursor);
                     self.mode = mode.clone();
+
+                    if self.mode == Mode::Insert {
+                        return_vec.push(OutcomingConsoleEvent::DisableProxy);
+                    } else {
+                        return_vec.push(OutcomingConsoleEvent::EnableProxy);
+                    }
                 }
                 _ => self.should_redraw = Some(Redraw::Cursor),
             };
@@ -465,6 +468,17 @@ impl<T: EditorContentTrait> ModuleEvent for Editor<T> {
 
         Some(drawing_actions)
     }
+
+    fn on_resize(&mut self, top: u32, right: u32, bottom: u32, left: u32) {
+        self.should_redraw = Some(Redraw::All);
+        let width = right - left;
+        let height = bottom - top;
+
+        self.view.bottom = self.view.top + height as u32 - 1;
+        self.view.right = self.view.left + width as u32 - 1;
+
+        self.should_redraw = Some(Redraw::All);
+    }
 }
 
 impl<T: EditorContentTrait> ModuleView for Editor<T> {
@@ -496,7 +510,6 @@ fn normal_mode_keybinding(key: KeyEvent) -> Vec<Action> {
             Action::ChangeMode(Mode::Insert),
         ],
         KeyCode::Char('s') => vec![Action::SaveFile],
-        KeyCode::Char(':') => vec![Action::ChangeMode(Mode::Command)],
         KeyCode::PageDown => vec![Action::ScrollBy(1)],
         KeyCode::PageUp => vec![Action::ScrollBy(-1)],
         KeyCode::Backspace => vec![Action::Move(Movement::Left)],

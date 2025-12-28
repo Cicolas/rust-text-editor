@@ -1,5 +1,9 @@
 use std::{
-    cell::{Ref, RefCell}, io::{Stdout, stdout}, ops::Index, path::PathBuf, vec
+    cell::{Ref, RefCell},
+    io::{stdout, Stdout},
+    ops::Index,
+    path::PathBuf,
+    usize, vec,
 };
 
 use crossterm::{
@@ -24,25 +28,30 @@ use super::{
 
 const BSP_EXPOENT: u16 = 3;
 
+#[derive(Clone)]
 pub enum IncomingConsoleEvent {
     Key(KeyEvent),
     Resize(u16, u16),
-    File(PathBuf)
+    File(PathBuf),
 }
 
 pub enum OutcomingConsoleEvent {
-    FocusMe,
+    FocusMe(u32),
     UnfocusMe,
     Quit,
     Message(String, String), // (module, message)
-    None
+    DisableProxy,
+    EnableProxy,
+    Interrupt,
+    None,
 }
 
 pub struct ConsoleClient {
     stdout: Stdout,
     modules: Vec<Box<dyn Module>>,
-    focus_idx: Option<u32>,
+    focus_stack: Vec<u32>,
     containers: ContainerLayout,
+    proxy_enabled: bool,
 }
 
 impl ConsoleClient {
@@ -50,8 +59,9 @@ impl ConsoleClient {
         Self {
             stdout: stdout(),
             modules: Vec::new(),
-            focus_idx: None,
+            focus_stack: Vec::new(),
             containers: ContainerLayout::new(),
+            proxy_enabled: true,
         }
     }
 
@@ -90,15 +100,32 @@ impl ConsoleClient {
         .unwrap();
     }
 
+    fn trigger_proxy(&mut self, event: IncomingConsoleEvent) -> Vec<OutcomingConsoleEvent> {
+        let mut all_post_actions = Vec::new();
+
+        for idx in 0..self.modules.len() {
+            let mut module = self.modules.get_mut(idx);
+
+            if let Some(m) = module.as_mut() {
+                if let Some(post_actions) = m.proxy_trigger_events(&event, idx as u32) {
+                    for action in post_actions {
+                        all_post_actions.push(action);
+                    }
+                }
+            }
+        }
+
+        all_post_actions
+    }
 
     fn trigger_events(&mut self, event: IncomingConsoleEvent) -> Vec<OutcomingConsoleEvent> {
-        if self.focus_idx.is_none() {
+        if self.focus_stack.last().is_none() {
             warn!("Any module on focus");
             return vec![OutcomingConsoleEvent::None];
         }
 
-        let idx = self.focus_idx.unwrap() as usize;
-        let mut module = self.modules.get_mut(idx);
+        let idx = *self.focus_stack.last().unwrap();
+        let mut module = self.modules.get_mut(idx as usize);
         let mut all_post_actions = Vec::new();
 
         if let Some(m) = module.as_mut() {
@@ -165,22 +192,23 @@ impl ConsoleClient {
         }
     }
 
-    fn trigger_resize(&mut self) {
+    fn trigger_resize(&mut self, width: u16, height: u16) {
         execute!(self.stdout, Clear(ClearType::All)).unwrap();
 
         for idx in 0..self.modules.len() {
             let container = self.containers.get_module(idx).unwrap();
 
-            // self.trigger_events(vec![Action::Resize(
-            //     container.top as u16,
-            //     container.right as u16,
-            //     container.bottom as u16,
-            //     container.left as u16,
-            // )]);
+            let m = self.modules[idx].as_mut();
+            m.on_resize(
+                container.top,
+                container.right,
+                container.bottom,
+                container.left,
+            );
         }
     }
 
-    fn handle_outcoming_events(&mut self, events: Vec<OutcomingConsoleEvent>) {
+    fn handle_outcoming_events(&mut self, events: Vec<OutcomingConsoleEvent>) -> bool {
         for event in events {
             match event {
                 OutcomingConsoleEvent::Quit => {
@@ -188,9 +216,26 @@ impl ConsoleClient {
                     self.before_quit();
                     std::process::exit(0);
                 }
+                OutcomingConsoleEvent::EnableProxy => {
+                    self.proxy_enabled = true;
+                }
+                OutcomingConsoleEvent::DisableProxy => {
+                    self.proxy_enabled = false;
+                }
+                OutcomingConsoleEvent::FocusMe(idx) => {
+                    self.change_focus(idx);
+                }
+                OutcomingConsoleEvent::UnfocusMe => {
+                    self.focus_stack.pop();
+                }
+                OutcomingConsoleEvent::Interrupt => {
+                    return false;
+                }
                 _ => (),
             }
         }
+
+        true
     }
 }
 
@@ -205,27 +250,32 @@ impl ClientEvent for ConsoleClient {
         execute!(self.stdout, EnterAlternateScreen, Clear(ClearType::All)).unwrap();
     }
 
-    fn update(&mut self) -> Option<u8> {
+    fn update(&mut self) {
         let event = crossterm::event::read();
 
         match event {
             Ok(Event::Key(key)) => {
                 if key.kind == KeyEventKind::Release {
-                    return None;
+                    return;
+                }
+
+                if self.proxy_enabled {
+                    let proxy_outcoming_envents =
+                        self.trigger_proxy(IncomingConsoleEvent::Key(key));
+                    if !self.handle_outcoming_events(proxy_outcoming_envents) {
+                        return;
+                    }
                 }
 
                 // TODO: handle outcoming events
                 let outcoming_events = self.trigger_events(IncomingConsoleEvent::Key(key));
-
                 self.handle_outcoming_events(outcoming_events);
             }
             Ok(Event::Resize(w, h)) => {
-                self.trigger_resize();
+                self.trigger_resize(w, h);
             }
             _ => (),
         }
-
-        None
     }
 
     fn draw(&mut self) {
@@ -249,14 +299,15 @@ impl ClientModular for ConsoleClient {
 
         module.on_load();
         self.modules.push(module);
-        self.focus_idx = Some(module_idx as u32);
+        self.focus_stack.push(module_idx as u32);
 
         // TODO: resize all modules
-        self.trigger_resize();
+        let (w, h) = terminal::size().unwrap();
+        self.trigger_resize(w, h);
     }
 
     fn change_focus(&mut self, idx: u32) {
-        self.focus_idx = Some(idx);
+        self.focus_stack.push(idx);
     }
 }
 
