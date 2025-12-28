@@ -122,6 +122,11 @@ impl<T: EditorContentTrait> Editor<T> {
                     self.row = cmp::max(0, self.row as i32 - 1) as u32;
 
                     wrap_left = true;
+                    
+                    if self.render_row == self.view.top {
+                        self.scroll_to(self.view.left as i32, self.view.top as i32 - 1);
+                        self.should_redraw = Some(Redraw::All);
+                    }
                 } else {
                     self.col = cmp::max(0, cmp::min(self.render_col, self.col) as i32 - 1) as u32;
                 }
@@ -138,6 +143,11 @@ impl<T: EditorContentTrait> Editor<T> {
                 if self.col > line_len {
                     self.col = 0;
                     self.row += 1;
+
+                    if self.render_row == self.view.bottom {
+                        self.scroll_to(self.view.left as i32, self.view.top as i32 + 1);
+                        self.should_redraw = Some(Redraw::All);
+                    }
                 }
             }
             Movement::LineEnd => {
